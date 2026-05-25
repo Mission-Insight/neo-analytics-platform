@@ -5,7 +5,7 @@
             "name": "Fetch Script",
             "type": "debugpy",
             "request": "launch",
-            "program": "${workspaceFolder}/src/fetch_news.py",
+            "program": "${workspaceFolder}/src/fetch_neows.py",
             "console": "integratedTerminal"
         },
         {
