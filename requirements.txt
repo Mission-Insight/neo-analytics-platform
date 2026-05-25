@@ -1,0 +1,6 @@
+pandas
+numpy
+requests
+streamlit
+pytest
+python-dotenv
