@@ -1,0 +1,8 @@
+[flake8]
+exclude =
+    venv,
+    __pycache__,
+    .git,
+    .ipynb_checkpoints
+
+max-line-length = 88
