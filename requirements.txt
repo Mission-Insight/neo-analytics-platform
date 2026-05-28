@@ -5,3 +5,5 @@ streamlit
 pytest
 python-dotenv
 matplotlib
+requests
+datetime
