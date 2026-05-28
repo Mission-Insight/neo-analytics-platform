@@ -1,0 +1,33 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "Fetch Script",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${workspaceFolder}/src/fetch_neows.py",
+            "console": "integratedTerminal"
+        },
+        {
+            "name": "Streamlit Dashboard",
+            "type": "debugpy",
+            "request": "launch",
+            "module": "streamlit",
+            "args": [
+                "run",
+                "${workspaceFolder}/src/app.py"
+            ],
+            "console": "integratedTerminal"
+        },
+        {
+            "name": "Unit Tests",
+            "type": "debugpy",
+            "request": "launch",
+            "module": "pytest",
+            "args": [
+                "tests"
+            ],
+            "console": "integratedTerminal"
+        }
+    ]
+}
