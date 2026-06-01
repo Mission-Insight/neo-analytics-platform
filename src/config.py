@@ -12,6 +12,6 @@ NASA_API_KEY = os.getenv("NASA_API_KEY")
 
 if not NASA_API_KEY:
     raise ValueError(
-        "NASA_API_KEY was not found. Make sure your .env file exists in the project root "
-        "and contains NASA_API_KEY=your_api_key_here."
+        "NASA_API_KEY was not found. Make sure your .env file"
+        "exists in the project root and contains NASA_API_KEY=your_api_key_here."
     )

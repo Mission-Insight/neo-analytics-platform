@@ -7,7 +7,5 @@
         }
     ],
     "python.defaultInterpreterPath": "./venv/bin/python",
-    "editor.formatOnSave": true,
-    "python.formatting.provider": "black",
-    "python.linting.flake8Enabled": true
+    "editor.formatOnSave": true
 }

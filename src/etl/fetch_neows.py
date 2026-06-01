@@ -2,6 +2,8 @@ from pathlib import Path
 from datetime import datetime
 import json
 import requests
+import argparse
+import time
 
 from src.config import NASA_API_KEY
 
@@ -101,23 +103,59 @@ def validate_saved_file_integrity(
     print("File integrity validation passed.")
 
 
+def validate_date_inputs(start_date: str, end_date: str) -> None:
+    try:
+        start = datetime.strptime(start_date, "%Y-%m-%d")
+    except ValueError:
+        raise ValueError(
+            f"Invalid start date '{start_date}'. " "Expected format: YYYY-MM-DD."
+        )
+
+    try:
+        end = datetime.strptime(end_date, "%Y-%m-%d")
+    except ValueError:
+        raise ValueError(
+            f"Invalid end date '{end_date}'. " "Expected format: YYYY-MM-DD."
+        )
+
+    if start > end:
+        raise ValueError("Start date must be before or equal to end date.")
+
+
 def main():
-    start_date = "2026-05-01"
-    end_date = "2026-05-07"
+    start_time = time.perf_counter()
+
+    parser = argparse.ArgumentParser(description="Fetch NASA NEO data")
+
+    parser.add_argument("--start", required=True, help="Start date (YYYY-MM-DD)")
+
+    parser.add_argument("--end", required=True, help="End date (YYYY-MM-DD)")
+
+    args = parser.parse_args()
+
+    start_date = args.start
+    end_date = args.end
+
+    try:
+        validate_date_inputs(start_date, end_date)
+    except ValueError as exc:
+        parser.error(str(exc))
 
     data = fetch_neows_feed(start_date, end_date)
 
-    output_path = save_raw_response(
-        data,
-        start_date,
-    )
+    output_path = save_raw_response(data, start_date)
 
-    validate_saved_file_integrity(
-        data,
-        output_path,
-    )
+    validate_saved_file_integrity(data, output_path)
 
-    print(f"Raw response saved to: {output_path}")
+    rows_fetched = data["element_count"]
+
+    duration = time.perf_counter() - start_time
+
+    print("\nExecution Summary")
+    print("-----------------")
+    print(f"Rows fetched: {rows_fetched}")
+    print(f"Duration: {duration:.2f} seconds")
+    print(f"Output file: {output_path}")
 
 
 if __name__ == "__main__":
