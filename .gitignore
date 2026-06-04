@@ -5,3 +5,4 @@ __pycache__/
 *.db
 .ipynb_checkpoints/
 data/raw/
+logs/

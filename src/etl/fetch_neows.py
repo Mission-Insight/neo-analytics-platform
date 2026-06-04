@@ -1,11 +1,14 @@
 from pathlib import Path
 from datetime import datetime
-import json
-import requests
 import argparse
+import json
+import logging
 import time
 
+import requests
+
 from src.config import NASA_API_KEY
+from src.logging import setup_logging
 
 BASE_URL = "https://api.nasa.gov/neo/rest/v1/feed"
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
@@ -16,25 +19,103 @@ REQUIRED_KEYS = {
     "near_earth_objects",
 }
 
+logger = logging.getLogger(__name__)
+
 
 def fetch_neows_feed(start_date: str, end_date: str) -> dict:
+    logger.info(
+        "REQUEST START | start_date=%s | end_date=%s",
+        start_date,
+        end_date,
+    )
+
     params = {
         "start_date": start_date,
         "end_date": end_date,
         "api_key": NASA_API_KEY,
     }
 
-    response = requests.get(
-        BASE_URL,
-        params=params,
-        timeout=30,
-    )
+    max_retries = 3
+    base_delay = 1
 
-    response.raise_for_status()
+    response = None
+    for attempt in range(1, max_retries + 1):
+        try:
+            logger.info(
+                "REQUEST ATTEMPT | attempt=%s | max_retries=%s",
+                attempt,
+                max_retries,
+            )
+
+            response = requests.get(
+                BASE_URL,
+                params=params,
+                timeout=30,
+            )
+
+            # response.status_code =
+
+            handle_http_error(
+                response=response,
+                start_date=start_date,
+                end_date=end_date,
+            )
+
+            logger.info(
+                "REQUEST SUCCESS | status_code=%s | attempt=%s",
+                response.status_code,
+                attempt,
+            )
+
+            logger.info(
+                "RESPONSE SIZE | bytes=%s",
+                len(response.content),
+            )
+
+            break
+
+        except requests.RequestException as exc:
+            if attempt == max_retries:
+                logger.error(
+                    "REQUEST FAILURE | retries_exhausted=True | error=%s",
+                    exc,
+                    exc_info=True,
+                )
+                raise
+
+            delay = base_delay * (2 ** (attempt - 1))
+
+            logger.warning(
+                "REQUEST RETRY | attempt=%s | next_delay_seconds=%s | error=%s",
+                attempt,
+                delay,
+                exc,
+            )
+
+            time.sleep(delay)
+
+    if response is None:
+        raise RuntimeError(
+            "No response received after all retry attempts."
+        )
 
     data = response.json()
 
     validate_response_shape(data)
+
+    logger.info(
+        "RESPONSE RECORD COUNT | element_count=%s",
+        data["element_count"],
+    )
+
+    if data["element_count"] == 0:
+        logger.warning("NASA API returned zero near-Earth objects")
+
+    elif data["element_count"] < 10:
+        logger.warning(
+            "NASA API returned an unusually small dataset: %s objects",
+            data["element_count"],
+        )
 
     return data
 
@@ -44,118 +125,140 @@ def validate_response_shape(data: dict) -> None:
     Validate expected NeoWs response structure.
     """
 
-    if not isinstance(data, dict):
-        raise TypeError(
-            f"Expected response data to be dict, got {type(data).__name__}."
-        )
-
     missing_keys = REQUIRED_KEYS - data.keys()
 
     if missing_keys:
-        raise ValueError(f"Missing expected response keys: {missing_keys}")
+        logger.error(
+            "Response missing required keys: %s",
+            missing_keys,
+        )
 
-    if not isinstance(data["links"], dict):
-        raise TypeError("Expected 'links' to be a dict.")
+        raise ValueError(
+            f"Response missing required keys: {missing_keys}"
+        )
 
-    if not isinstance(data["element_count"], int):
-        raise TypeError("Expected 'element_count' to be an int.")
-
-    if not isinstance(data["near_earth_objects"], dict):
-        raise TypeError("Expected 'near_earth_objects' to be a dict.")
-
-    print("Response shape validation passed.")
+    logger.info("Response schema validation passed")
 
 
-def build_raw_storage_dir(date_str: str) -> Path:
-    year, month, day = date_str.split("-")
-    raw_dir = PROJECT_ROOT / "data" / "raw" / year / month / day
-    raw_dir.mkdir(parents=True, exist_ok=True)
-    return raw_dir
-
-
-def save_raw_response(data: dict, start_date: str) -> Path:
-    raw_dir = build_raw_storage_dir(start_date)
-
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-
-    output_path = raw_dir / f"neows_{timestamp}.json"
-
-    with output_path.open("w", encoding="utf-8") as file:
-        json.dump(data, file, indent=2)
-
-    return output_path
-
-
-def validate_saved_file_integrity(
-    original_data: dict,
-    file_path: Path,
+def handle_http_error(
+    response: requests.Response,
+    start_date: str,
+    end_date: str,
 ) -> None:
-    """
-    Reload saved JSON and verify integrity against original object.
-    """
+    status_code = response.status_code
 
-    with file_path.open("r", encoding="utf-8") as file:
-        reloaded_data = json.load(file)
+    error_context = {
+        "endpoint": BASE_URL,
+        "start_date": start_date,
+        "end_date": end_date,
+        "timestamp": datetime.now().isoformat(),
+        "status_code": status_code,
+    }
 
-    if reloaded_data != original_data:
-        raise ValueError("Saved JSON file failed integrity validation.")
+    if status_code == 400:
+        logger.error("HTTP 400 Bad Request | context=%s", error_context)
+        raise ValueError("Bad request: check request parameters.")
 
-    print("File integrity validation passed.")
+    if status_code in {401, 403}:
+        logger.error("HTTP %s Authorization Error | context=%s",status_code,error_context)
+        raise PermissionError("NASA API key is invalid, missing, or not authorized.")
 
+    if status_code == 429:
+        logger.error("HTTP 429 Too Many Requests | context=%s", error_context)
+        raise requests.HTTPError("Rate limit exceeded. Try again later.", response=response)
 
-def validate_date_inputs(start_date: str, end_date: str) -> None:
-    try:
-        start = datetime.strptime(start_date, "%Y-%m-%d")
-    except ValueError:
-        raise ValueError(
-            f"Invalid start date '{start_date}'. " "Expected format: YYYY-MM-DD."
-        )
+    if status_code >= 500:
+        logger.error("HTTP %s Server Error | context=%s", status_code, error_context)
+        raise requests.HTTPError("NASA API server error. Try again later.", response=response)
 
-    try:
-        end = datetime.strptime(end_date, "%Y-%m-%d")
-    except ValueError:
-        raise ValueError(
-            f"Invalid end date '{end_date}'. " "Expected format: YYYY-MM-DD."
-        )
-
-    if start > end:
-        raise ValueError("Start date must be before or equal to end date.")
+    response.raise_for_status()
 
 
-def main():
-    start_time = time.perf_counter()
+def save_raw_data(
+    data: dict,
+    start_date: str,
+) -> Path:
+    date_obj = datetime.strptime(
+        start_date,
+        "%Y-%m-%d",
+    )
 
-    parser = argparse.ArgumentParser(description="Fetch NASA NEO data")
+    raw_dir = (
+        PROJECT_ROOT
+        / "data"
+        / "raw"
+        / date_obj.strftime("%Y")
+        / date_obj.strftime("%m")
+        / date_obj.strftime("%d")
+    )
 
-    parser.add_argument("--start", required=True, help="Start date (YYYY-MM-DD)")
+    raw_dir.mkdir(
+        parents=True,
+        exist_ok=True,
+    )
 
-    parser.add_argument("--end", required=True, help="End date (YYYY-MM-DD)")
+    timestamp = datetime.now().strftime("%H%M%S")
+
+    output_file = (
+        raw_dir
+        / f"neows_feed_{timestamp}.json"
+    )
+
+    with open(output_file, "w", encoding="utf-8") as f:
+        json.dump(data, f, indent=2)
+
+    logger.info(
+        "Saved raw data to %s",
+        output_file,
+    )
+
+    return output_file
+
+
+def main() -> None:
+    setup_logging()
+
+    parser = argparse.ArgumentParser()
+
+    parser.add_argument(
+        "--start-date",
+        required=True,
+        help="Start date in YYYY-MM-DD format",
+    )
+
+    parser.add_argument(
+        "--end-date",
+        required=True,
+        help="End date in YYYY-MM-DD format",
+    )
 
     args = parser.parse_args()
 
-    start_date = args.start
-    end_date = args.end
-
     try:
-        validate_date_inputs(start_date, end_date)
-    except ValueError as exc:
-        parser.error(str(exc))
+        data = fetch_neows_feed(
+            start_date=args.start_date,
+            end_date=args.end_date,
+        )
 
-    data = fetch_neows_feed(start_date, end_date)
+        save_raw_data(data, args.start_date)
 
-    output_path = save_raw_response(data, start_date)
+        logger.info("NeoWs fetch completed successfully")
 
-    validate_saved_file_integrity(data, output_path)
+    except requests.RequestException as exc:
+        logger.error(
+            "NeoWs fetch failed because the API request failed: %s",
+            exc,
+            exc_info=True,
+        )
+        raise
 
-    rows_fetched = data["element_count"]
-
-    duration = time.perf_counter() - start_time
-
-    print("\nExecution Summary")
-    print("-----------------")
-    print(f"Rows fetched: {rows_fetched}")
-    print(f"Duration: {duration:.2f} seconds")
-    print(f"Output file: {output_path}")
+    except Exception as exc:
+        logger.error(
+            "NeoWs fetch failed unexpectedly: %s",
+            exc,
+            exc_info=True,
+        )
+        raise
 
 
 if __name__ == "__main__":
