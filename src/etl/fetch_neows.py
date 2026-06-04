@@ -160,16 +160,27 @@ def handle_http_error(
         raise ValueError("Bad request: check request parameters.")
 
     if status_code in {401, 403}:
-        logger.error("HTTP %s Authorization Error | context=%s",status_code,error_context)
+        logger.error(
+            "HTTP %s Authorization Error | context=%s",
+            status_code,
+            error_context
+        )
+
         raise PermissionError("NASA API key is invalid, missing, or not authorized.")
 
     if status_code == 429:
         logger.error("HTTP 429 Too Many Requests | context=%s", error_context)
-        raise requests.HTTPError("Rate limit exceeded. Try again later.", response=response)
+        raise requests.HTTPError(
+            "Rate limit exceeded. Try again later.",
+            response=response
+        )
 
     if status_code >= 500:
         logger.error("HTTP %s Server Error | context=%s", status_code, error_context)
-        raise requests.HTTPError("NASA API server error. Try again later.", response=response)
+        raise requests.HTTPError(
+            "NASA API server error. Try again later.",
+            response=response
+        )
 
     response.raise_for_status()
 
