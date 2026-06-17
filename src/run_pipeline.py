@@ -1,13 +1,21 @@
 import argparse
 import logging
 
+from src.db.connection import get_connection
 from src.db.init_db import initialize_database
+from src.db.load_asteroids import insert_asteroids
+from src.db.load_close_approaches import insert_close_approaches
+from src.db.load_orbital_parameters import insert_orbital_parameters
+from src.db.log_ingestion import (
+    complete_ingestion_run,
+    fail_ingestion_run,
+    start_ingestion_run,
+)
 from src.etl.fetch_neows import fetch_neows_feed
 from src.logging import setup_logging
 from src.parsing.parse_asteroids import parse_asteroid
 from src.parsing.parse_close_approaches import parse_close_approaches
 from src.parsing.parse_orbital_parameters import parse_orbital_parameters
-from src.db.connection import get_connection
 
 setup_logging()
 logger = logging.getLogger(__name__)
@@ -46,107 +54,40 @@ def run_pipeline(start_date: str, end_date: str) -> None:
     logger.info("Parsed %s orbital parameter records.", len(orbital_parameters))
 
     logger.info("Inserting parsed records into the database.")
+
     with get_connection() as conn:
-        cur = conn.cursor()
-
-        if asteroids:
-            asteroid_sql = """
-            INSERT INTO asteroids (
-                asteroid_id, name, absolute_magnitude_h,
-                estimated_diameter_min_km, estimated_diameter_max_km,
-                is_potentially_hazardous
-            ) VALUES (?, ?, ?, ?, ?, ?)
-            ON CONFLICT(asteroid_id) DO UPDATE SET
-                name=excluded.name,
-                absolute_magnitude_h=excluded.absolute_magnitude_h,
-                estimated_diameter_min_km=excluded.estimated_diameter_min_km,
-                estimated_diameter_max_km=excluded.estimated_diameter_max_km,
-                is_potentially_hazardous=excluded.is_potentially_hazardous;
-            """
-
-            asteroid_params = [
-                (
-                    a.get("asteroid_id"),
-                    a.get("name"),
-                    a.get("absolute_magnitude_h"),
-                    a.get("estimated_diameter_min_km"),
-                    a.get("estimated_diameter_max_km"),
-                    a.get("is_potentially_hazardous"),
-                )
-                for a in asteroids
-            ]
-
-            cur.executemany(asteroid_sql, asteroid_params)
-
-        if orbital_parameters:
-            orbital_sql = """
-            INSERT INTO orbital_parameters (
-                asteroid_id, orbit_class_type, orbit_class_description,
-                eccentricity, semi_major_axis, inclination, orbital_period,
-                perihelion_distance, aphelion_distance
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-            ON CONFLICT(asteroid_id) DO UPDATE SET
-                orbit_class_type=excluded.orbit_class_type,
-                orbit_class_description=excluded.orbit_class_description,
-                eccentricity=excluded.eccentricity,
-                semi_major_axis=excluded.semi_major_axis,
-                inclination=excluded.inclination,
-                orbital_period=excluded.orbital_period,
-                perihelion_distance=excluded.perihelion_distance,
-                aphelion_distance=excluded.aphelion_distance;
-            """
-
-            orbital_params = [
-                (
-                    o.get("asteroid_id"),
-                    o.get("orbit_class_type"),
-                    o.get("orbit_class_description"),
-                    o.get("eccentricity"),
-                    o.get("semi_major_axis"),
-                    o.get("inclination"),
-                    o.get("orbital_period"),
-                    o.get("perihelion_distance"),
-                    o.get("aphelion_distance"),
-                )
-                for o in orbital_parameters
-            ]
-
-            cur.executemany(orbital_sql, orbital_params)
-
-        if close_approaches:
-            # To avoid inserting duplicates when re-running the pipeline,
-            # delete any existing approach for the same
-            # asteroid & date before inserting.
-            delete_ca_sql = (
-                "DELETE FROM close_approaches WHERE asteroid_id = ? "
-                " AND close_approach_date = ?"
-            )
-            insert_ca_sql = """
-            INSERT INTO close_approaches (
-                asteroid_id, close_approach_date, relative_velocity_kps,
-                miss_distance_km, orbiting_body
-            ) VALUES (?, ?, ?, ?, ?)
-            """
-
-            for ca in close_approaches:
-                cur.execute(
-                    delete_ca_sql,
-                    (ca.get("asteroid_id"), ca.get("close_approach_date")),
-                )
-                cur.execute(
-                    insert_ca_sql,
-                    (
-                        ca.get("asteroid_id"),
-                        ca.get("close_approach_date"),
-                        ca.get("relative_velocity_kps"),
-                        ca.get("miss_distance_km"),
-                        ca.get("orbiting_body"),
-                    ),
-                )
-
+        run_id = start_ingestion_run(conn, start_date, end_date)
         conn.commit()
-        logger.info("Inserted records into database.")
 
+        try:
+            insert_asteroids(conn, asteroids)
+            insert_orbital_parameters(conn, orbital_parameters)
+            insert_close_approaches(conn, close_approaches)
+
+            complete_ingestion_run(
+                conn,
+                run_id,
+                len(asteroids),
+                len(close_approaches),
+                len(orbital_parameters),
+            )
+
+            conn.commit()
+
+        except Exception as error:
+            conn.rollback()
+
+            fail_ingestion_run(
+                conn,
+                run_id,
+                str(error),
+            )
+            conn.commit()
+
+            logger.exception("Database transaction failed. Rolled back changes.")
+            raise
+
+    logger.info("Inserted records into database.")
     logger.info("Pipeline completed successfully.")
 
 
