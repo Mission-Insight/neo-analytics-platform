@@ -27,15 +27,33 @@ CREATE TABLE IF NOT EXISTS close_approaches (
 CREATE TABLE IF NOT EXISTS orbital_parameters (
     asteroid_id TEXT PRIMARY KEY,
 
-    orbit_class_type TEXT,
-    orbit_class_description TEXT,
+    orbit_id TEXT,
+    orbit_determination_date TEXT,
+    first_observation_date TEXT,
+    last_observation_date TEXT,
+    data_arc_in_days INTEGER,
+    observations_used INTEGER,
+    orbit_uncertainty TEXT,
+    minimum_orbit_intersection REAL,
+    jupiter_tisserand_invariant REAL,
+    epoch_osculation REAL,
 
     eccentricity REAL,
     semi_major_axis REAL,
     inclination REAL,
+    ascending_node_longitude REAL,
     orbital_period REAL,
     perihelion_distance REAL,
+    perihelion_argument REAL,
     aphelion_distance REAL,
+    perihelion_time REAL,
+    mean_anomaly REAL,
+    mean_motion REAL,
+    equinox TEXT,
+
+    orbit_class_type TEXT,
+    orbit_class_description TEXT,
+    orbit_class_range TEXT,
 
     FOREIGN KEY (asteroid_id)
         REFERENCES asteroids (asteroid_id)

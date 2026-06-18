@@ -15,16 +15,16 @@ from src.etl.fetch_neows import fetch_neows_feed
 from src.logging import setup_logging
 from src.parsing.parse_asteroids import parse_asteroid
 from src.parsing.parse_close_approaches import parse_close_approaches
-from src.parsing.parse_orbital_parameters import parse_orbital_parameters
+from src.etl.fetch_orbital_parameters import fetch_orbital_parameters_for_feed
+from src.transform.transform_neows import transform_orbital_parameters
 
 setup_logging()
 logger = logging.getLogger(__name__)
 
 
-def parse_neows_feed(raw_data: dict) -> tuple[list[dict], list[dict], list[dict]]:
+def parse_neows_feed(raw_data: dict) -> tuple[list[dict], list[dict]]:
     asteroid_records = []
     close_approach_records = []
-    orbital_parameter_records = []
 
     near_earth_objects = raw_data.get("near_earth_objects", {})
 
@@ -32,9 +32,8 @@ def parse_neows_feed(raw_data: dict) -> tuple[list[dict], list[dict], list[dict]
         for asteroid in asteroids_on_date:
             asteroid_records.append(parse_asteroid(asteroid))
             close_approach_records.extend(parse_close_approaches(asteroid))
-            orbital_parameter_records.append(parse_orbital_parameters(asteroid))
 
-    return asteroid_records, close_approach_records, orbital_parameter_records
+    return asteroid_records, close_approach_records
 
 
 def run_pipeline(start_date: str, end_date: str) -> None:
@@ -47,7 +46,13 @@ def run_pipeline(start_date: str, end_date: str) -> None:
     raw_data = fetch_neows_feed(start_date, end_date)
 
     logger.info("Parsing NeoWs data.")
-    asteroids, close_approaches, orbital_parameters = parse_neows_feed(raw_data)
+    asteroids, close_approaches = parse_neows_feed(raw_data)
+
+    logger.info("Fetching detailed orbital parameter data.")
+    raw_orbital_parameters = fetch_orbital_parameters_for_feed(raw_data)
+
+    logger.info("Transforming orbital parameter data.")
+    orbital_parameters = transform_orbital_parameters(raw_orbital_parameters)
 
     logger.info("Parsed %s asteroid records.", len(asteroids))
     logger.info("Parsed %s close approach records.", len(close_approaches))
