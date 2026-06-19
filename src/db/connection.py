@@ -1,8 +1,6 @@
-from pathlib import Path
 import sqlite3
 
-PROJECT_ROOT = Path(__file__).resolve().parents[2]
-DB_PATH = PROJECT_ROOT / "data" / "database" / "neows.db"
+from src.config import DB_PATH
 
 
 def get_connection() -> sqlite3.Connection:
