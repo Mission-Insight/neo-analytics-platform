@@ -10,6 +10,7 @@ load_dotenv(dotenv_path=ENV_PATH)
 
 NASA_API_KEY = os.getenv("NASA_API_KEY")
 DB_PATH = os.getenv("DATABASE_PATH")
+B_URL = os.getenv("BASE_URL")
 
 if not NASA_API_KEY:
     raise ValueError(
@@ -23,4 +24,11 @@ if not DB_PATH:
         "exists in the project root and contains DATABASE_PATH=your_database_path_here."
     )
 
+if not B_URL:
+    raise ValueError(
+        "BASE_URL was not found. Make sure your .env file"
+        "exists in the project root and contains BASE_URL=your_base_url_here."
+    )
+
 DB_PATH = Path(DB_PATH)
+BASE_URL: str = B_URL
