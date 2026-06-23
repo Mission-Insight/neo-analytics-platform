@@ -8,9 +8,9 @@ import time
 import requests
 
 from src.config import NASA_API_KEY
+from src.config import BASE_URL
 from src.logging import setup_logging
 
-BASE_URL = "https://api.nasa.gov/neo/rest/v1/feed"
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 
 REQUIRED_KEYS = {
@@ -95,9 +95,7 @@ def fetch_neows_feed(start_date: str, end_date: str) -> dict:
             time.sleep(delay)
 
     if response is None:
-        raise RuntimeError(
-            "No response received after all retry attempts."
-        )
+        raise RuntimeError("No response received after all retry attempts.")
 
     data = response.json()
 
@@ -133,9 +131,7 @@ def validate_response_shape(data: dict) -> None:
             missing_keys,
         )
 
-        raise ValueError(
-            f"Response missing required keys: {missing_keys}"
-        )
+        raise ValueError(f"Response missing required keys: {missing_keys}")
 
     logger.info("Response schema validation passed")
 
@@ -161,9 +157,7 @@ def handle_http_error(
 
     if status_code in {401, 403}:
         logger.error(
-            "HTTP %s Authorization Error | context=%s",
-            status_code,
-            error_context
+            "HTTP %s Authorization Error | context=%s", status_code, error_context
         )
 
         raise PermissionError("NASA API key is invalid, missing, or not authorized.")
@@ -171,15 +165,13 @@ def handle_http_error(
     if status_code == 429:
         logger.error("HTTP 429 Too Many Requests | context=%s", error_context)
         raise requests.HTTPError(
-            "Rate limit exceeded. Try again later.",
-            response=response
+            "Rate limit exceeded. Try again later.", response=response
         )
 
     if status_code >= 500:
         logger.error("HTTP %s Server Error | context=%s", status_code, error_context)
         raise requests.HTTPError(
-            "NASA API server error. Try again later.",
-            response=response
+            "NASA API server error. Try again later.", response=response
         )
 
     response.raise_for_status()
@@ -210,10 +202,7 @@ def save_raw_data(
 
     timestamp = datetime.now().strftime("%H%M%S")
 
-    output_file = (
-        raw_dir
-        / f"neows_feed_{timestamp}.json"
-    )
+    output_file = raw_dir / f"neows_feed_{timestamp}.json"
 
     with open(output_file, "w", encoding="utf-8") as f:
         json.dump(data, f, indent=2)
