@@ -71,4 +71,11 @@ erDiagram
         REAL duration_seconds
         TEXT error_message
     }
+
+    INGESTION_FAILURES {
+        INTEGER failure_id PK
+        INTEGER run_id FK
+        TEXT error_message
+        TEXT failed_at
+    }
 ```
