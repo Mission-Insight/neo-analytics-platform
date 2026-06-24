@@ -5,4 +5,7 @@ exclude =
     .git,
     .ipynb_checkpoints
 
-max-line-length = 88
+max-line-length = 120
+extend-ignore = F821
+per-file-ignores =
+    notebooks/*.ipynb: E302,E305

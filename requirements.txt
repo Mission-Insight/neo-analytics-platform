@@ -10,3 +10,4 @@ datetime
 argparse
 time
 logging
+nbqa
