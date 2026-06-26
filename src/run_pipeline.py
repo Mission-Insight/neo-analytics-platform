@@ -1,5 +1,6 @@
 import argparse
 import logging
+from datetime import date, timedelta
 
 from src.db.connection import get_connection
 from src.db.init_db import initialize_database
@@ -22,6 +23,19 @@ setup_logging()
 logger = logging.getLogger(__name__)
 
 
+MAX_CHUNK_DAYS = 7
+
+
+def _date_chunks(start_date: str, end_date: str):
+    start = date.fromisoformat(start_date)
+    end = date.fromisoformat(end_date)
+    current = start
+    while current <= end:
+        chunk_end = min(current + timedelta(days=MAX_CHUNK_DAYS - 1), end)
+        yield current.isoformat(), chunk_end.isoformat()
+        current = chunk_end + timedelta(days=1)
+
+
 def parse_neows_feed(raw_data: dict) -> tuple[list[dict], list[dict]]:
     asteroid_records = []
     close_approach_records = []
@@ -36,12 +50,7 @@ def parse_neows_feed(raw_data: dict) -> tuple[list[dict], list[dict]]:
     return asteroid_records, close_approach_records
 
 
-def run_pipeline(start_date: str, end_date: str) -> None:
-    logger.info("Starting Neo Analytics pipeline.")
-
-    logger.info("Initializing database.")
-    initialize_database()
-
+def _run_chunk(start_date: str, end_date: str) -> None:
     logger.info("Fetching NeoWs data from %s to %s.", start_date, end_date)
     raw_data = fetch_neows_feed(start_date, end_date)
 
@@ -93,6 +102,33 @@ def run_pipeline(start_date: str, end_date: str) -> None:
             raise
 
     logger.info("Inserted records into database.")
+
+
+def run_pipeline(start_date: str, end_date: str) -> None:
+    logger.info("Starting Neo Analytics pipeline.")
+
+    logger.info("Initializing database.")
+    initialize_database()
+
+    chunks = list(_date_chunks(start_date, end_date))
+    logger.info(
+        "Date range %s to %s spans %s chunk(s) of up to %s days.",
+        start_date,
+        end_date,
+        len(chunks),
+        MAX_CHUNK_DAYS,
+    )
+
+    for i, (chunk_start, chunk_end) in enumerate(chunks, 1):
+        logger.info(
+            "Processing chunk %s/%s: %s to %s.",
+            i,
+            len(chunks),
+            chunk_start,
+            chunk_end,
+        )
+        _run_chunk(chunk_start, chunk_end)
+
     logger.info("Pipeline completed successfully.")
 
 
@@ -112,6 +148,17 @@ def main() -> None:
     )
 
     args = parser.parse_args()
+
+    try:
+        start = date.fromisoformat(args.start_date)
+        end = date.fromisoformat(args.end_date)
+    except ValueError:
+        logger.error("Dates must be in YYYY-MM-DD format.")
+        raise
+
+    if end < start:
+        logger.error("--end-date must not be before --start-date.")
+        raise ValueError("--end-date must not be before --start-date.")
 
     try:
         run_pipeline(args.start_date, args.end_date)
