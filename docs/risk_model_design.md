@@ -302,3 +302,163 @@ These fields describe how well an asteroid has been tracked, not how dangerous i
 | `orbiting_body` | Constant value across all records |
 | `orbit_class_type` | Nominal category with no defensible numeric ordering |
 | `data_arc_in_days`, `observations_used`, `orbit_uncertainty` | Data quality metrics, not risk signals |
+
+---
+
+## 5.2 Feature Engineering Decisions
+
+### 5.2.3 Velocity Feature Strategy
+
+Three aggregation strategies were evaluated for `relative_velocity_kps`:
+
+| Strategy | Description | Decision |
+|---|---|---|
+| **Maximum** | `MAX(relative_velocity_kps)` across all recorded approaches | **Selected** |
+| Average | `AVG(relative_velocity_kps)` across all recorded approaches | Rejected |
+| Latest | velocity from the most recent `close_approach_date` | Rejected |
+
+**Rationale for maximum:**
+
+Risk scoring is a worst-case exercise. An asteroid that has demonstrated one very fast approach carries more concern than one that has only ever approached slowly, regardless of its average behavior. The maximum captures the ceiling of what the object is capable of — which is the relevant signal for prioritization.
+
+Average was rejected because it dilutes genuine high-speed events. An asteroid with nine slow approaches and one extreme pass at 40 km/s would score nearly the same as one that has only ever been slow, which is not the intended behavior.
+
+Latest was rejected because recency has no physical meaning in this context. The most recent recorded approach is an artifact of the dataset window, not a property of the asteroid.
+
+**Implementation:** `velocity_kps = MAX(relative_velocity_kps)` computed in the SQL join, mapped to a clean feature name in Python.
+
+---
+
+### 5.2.4 Miss Distance Feature Strategy
+
+The representative distance for each asteroid is its **minimum** recorded miss distance across all close approaches.
+
+| Strategy | Description | Decision |
+|---|---|---|
+| **Minimum** | `MIN(miss_distance_km)` across all recorded approaches | **Selected** |
+| Average | `AVG(miss_distance_km)` across all recorded approaches | Rejected |
+| Latest | distance from the most recent `close_approach_date` | Rejected |
+
+**Rationale for minimum:** Consistent with the worst-case philosophy applied to velocity. The closest an asteroid has ever come to Earth is the strongest proximity signal — an asteroid that has passed inside the Moon's orbit once is more concerning than one that has only ever passed at 50 million km, regardless of its typical behavior.
+
+**Implementation:** `miss_distance_km = MIN(miss_distance_km)` computed in the SQL join, mapped to a clean feature name in Python.
+
+---
+
+### 5.2.5 Encounter Frequency Feature
+
+`encounter_frequency = COUNT(close_approach_id)` per asteroid, computed in the SQL join.
+
+This feature counts how many close approach records exist for each asteroid in the database. Unlike the other three features, it returns `0` (not NULL) for asteroids with no approach records, because SQL `COUNT` on an unmatched LEFT JOIN returns zero.
+
+**Caveat carried forward from 5.1.2:** This is the weakest feature in the set. The current dataset spans only six months and shows ~137 approaches/month uniformly distributed — there is little per-asteroid variation. The feature is included because it is defined in the Epic formula (`w4(Frequency)`) and will become more meaningful as the dataset grows. Its weight in section 5.4 will reflect this limitation.
+
+---
+
+### 5.2.6 Missing Data Treatment Strategy
+
+#### NULL inventory by feature
+
+| Feature | Source | Can be NULL? | Cause |
+|---|---|---|---|
+| `diameter_km` | `estimated_diameter_min/max_km` | Yes (rare) | Asteroid record missing size data |
+| `velocity_kps` | `max_relative_velocity_kps` | Yes | No close approach records for this asteroid |
+| `miss_distance_km` | `min_miss_distance_km` | Yes | No close approach records for this asteroid |
+| `encounter_frequency` | `approach_count` (COUNT) | No — always ≥ 0 | SQL COUNT returns 0 for unmatched LEFT JOIN rows |
+
+#### Treatment: exclusion, not imputation
+
+Asteroids missing any continuous scoring feature receive `is_scorable = False` and are excluded from composite score calculation. They remain in the dataset with NULL component scores.
+
+**Why not impute?** Imputing velocity or miss distance for an asteroid with no close approach records would require inventing data — there is no recorded encounter to draw from. A score built on imputed proximity or speed would misrepresent actual risk. Exclusion is more honest: the model declines to score what it cannot measure.
+
+**Why not use a worst-case fill?** Filling NULL velocity with the dataset maximum would rank unobserved asteroids as highly dangerous by assumption. That inflates risk for objects we simply haven't seen approach yet, which is not a defensible scoring decision.
+
+#### Implementation
+
+Each row receives an `is_scorable` boolean:
+
+```python
+is_scorable = (
+    diameter_km is not None
+    and velocity_kps is not None
+    and miss_distance_km is not None
+)
+```
+
+The normalization step (5.3) and formula step (5.4) only process rows where `is_scorable = True`.
+
+---
+
+## 5.3 Feature Normalization
+
+### 5.3.1 Feature Range Analysis
+
+Computed from 832 scorable asteroids (dataset: 2026-01-01 – 2026-06-24).
+
+#### Diameter (km)
+
+| Metric | Value |
+|---|---|
+| Min | 0.001966 km |
+| Max | 3.173530 km |
+| Spread | 3.171564 km |
+| Median | 0.065395 km |
+| Mean | 0.168901 km |
+
+**Observation:** Heavily right-skewed — mean is more than 2.5× the median. Most asteroids are small (sub-100 m), while a small number of large PHOs pull the tail. This means min-max normalization will compress most asteroids toward 0, with large objects scoring distinctly higher. This is the intended behavior.
+
+---
+
+#### Velocity (km/s)
+
+| Metric | Value |
+|---|---|
+| Min | 0.773234 km/s |
+| Max | 45.517616 km/s |
+| Spread | 44.744382 km/s |
+| Median | 13.234548 km/s |
+| Mean | 13.962174 km/s |
+
+**Observation:** Well-behaved — mean and median are close (~13.2–14.0 km/s). The distribution is roughly symmetric. Min-max normalization will spread scores evenly across the range without distortion.
+
+---
+
+#### Miss Distance (km)
+
+| Metric | Value |
+|---|---|
+| Min | 260,528 km |
+| Max | 74,776,615 km |
+| Spread | 74,516,086 km |
+| Median | 35,942,997 km |
+| Mean | 38,062,068 km |
+
+**Observation:** Enormous absolute range (~287× from min to max), but mean and median are relatively close (~36–38M km), indicating a roughly symmetric distribution despite the scale. Min-max normalization applies cleanly. Note: this feature is **inverted** in the formula — closer = higher risk — so normalization will be `1 − (value − min) / (max − min)`.
+
+---
+
+#### Encounter Frequency
+
+| Metric | Value |
+|---|---|
+| Min | 1 |
+| Max | 2 |
+| Spread | 1 |
+| Median | 1 |
+| Mean | 1.020 |
+
+**Observation:** This is the most significant finding of the range analysis. The feature has a spread of exactly 1 — every asteroid in the dataset has either 1 or 2 recorded close approaches. The mean of 1.020 means roughly 98% of asteroids have exactly 1 approach. After min-max normalization this becomes a near-binary feature (1 → 0.0, 2 → 1.0) that distinguishes almost nothing.
+
+This confirms and strengthens the concern raised in 5.1.2 and 5.2.5. The weight assigned to this feature in section 5.4 must reflect that it is effectively non-discriminating in the current dataset.
+
+---
+
+### 5.3.1 Summary
+
+| Feature | Min | Max | Spread | Skew | Normalization note |
+|---|---|---|---|---|---|
+| `diameter_km` | 0.002 km | 3.174 km | 3.172 km | High right-skew | Most scores cluster near 0; large objects separate clearly |
+| `velocity_kps` | 0.773 km/s | 45.518 km/s | 44.744 km/s | Symmetric | Clean min-max |
+| `miss_distance_km` | 260,528 km | 74,776,615 km | 74,516,086 km | Roughly symmetric | Inverted: `1 − normalized` |
+| `encounter_frequency` | 1 | 2 | 1 | Near-binary | Effectively 0 or 1 after normalization; very low weight warranted |
