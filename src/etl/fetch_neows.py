@@ -37,6 +37,7 @@ def fetch_neows_feed(start_date: str, end_date: str) -> dict:
 
     max_retries = 3
     base_delay = 1
+    rate_limit_backoff = 60
 
     response = None
     for attempt in range(1, max_retries + 1):
@@ -53,7 +54,22 @@ def fetch_neows_feed(start_date: str, end_date: str) -> dict:
                 timeout=30,
             )
 
-            # response.status_code =
+            if response.status_code == 429:
+                retry_after = int(
+                    response.headers.get("Retry-After", rate_limit_backoff)
+                )
+                if attempt < max_retries:
+                    logger.warning(
+                        "REQUEST RATE LIMITED | attempt=%s | waiting=%ss",
+                        attempt,
+                        retry_after,
+                    )
+                    time.sleep(retry_after)
+                    continue
+                raise requests.HTTPError(
+                    f"Rate limit exceeded after {max_retries} attempts.",
+                    response=response,
+                )
 
             handle_http_error(
                 response=response,

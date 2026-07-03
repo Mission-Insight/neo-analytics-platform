@@ -136,6 +136,26 @@ def _handle_missing_data(rows: list[dict]) -> list[dict]:
     return rows
 
 
+_W_SIZE = 0.40
+_W_PROXIMITY = 0.30
+_W_VELOCITY = 0.20
+_W_FREQUENCY = 0.10
+
+
+def _compute_risk_scores(rows: list[dict]) -> list[dict]:
+    for row in rows:
+        if not row["is_scorable"]:
+            row["risk_score"] = None
+            continue
+        row["risk_score"] = (
+            _W_SIZE * row["diameter_norm"]
+            + _W_PROXIMITY * row["miss_distance_norm"]
+            + _W_VELOCITY * row["velocity_norm"]
+            + _W_FREQUENCY * row["encounter_frequency_norm"]
+        )
+    return rows
+
+
 def _build_features(rows: list[dict]) -> list[dict]:
     """
     Apply all feature engineering steps in sequence.
@@ -146,4 +166,65 @@ def _build_features(rows: list[dict]) -> list[dict]:
     rows = _add_miss_distance_feature(rows)
     rows = _add_encounter_frequency_feature(rows)
     rows = _handle_missing_data(rows)
+    ranges = _compute_feature_ranges(rows)
+    rows = _normalize_features(rows, ranges)
+    rows = _compute_risk_scores(rows)
+    return rows
+
+
+def _minmax(value: float, lo: float, hi: float) -> float:
+    if hi == lo:
+        return 0.0
+    return (value - lo) / (hi - lo)
+
+
+def _compute_feature_ranges(rows: list[dict]) -> dict:
+    """
+    Compute min and max for each scoring feature across all scorable rows.
+    Non-scorable rows are excluded so NULL values don't skew the range.
+    encounter_frequency is included even though it is never NULL — its range
+    is still computed from scorable rows for consistency.
+    """
+    scorable = [r for r in rows if r["is_scorable"]]
+    features = ["diameter_km", "velocity_kps", "miss_distance_km", "encounter_frequency"]
+    return {
+        f: {
+            "min": min(r[f] for r in scorable),
+            "max": max(r[f] for r in scorable),
+        }
+        for f in features
+    }
+
+
+def _normalize_features(rows: list[dict], ranges: dict) -> list[dict]:
+    """
+    Apply min-max normalization to each scoring feature.
+    miss_distance_norm is inverted (1 - normalized) so that closer = higher risk.
+    Non-scorable rows receive None for all normalized fields.
+    Strategy rationale: see docs/risk_model_design.md section 5.3.
+    """
+    for row in rows:
+        if not row["is_scorable"]:
+            row["diameter_norm"] = None
+            row["velocity_norm"] = None
+            row["miss_distance_norm"] = None
+            row["encounter_frequency_norm"] = None
+            continue
+
+        r = ranges
+        row["diameter_norm"] = _minmax(
+            row["diameter_km"], r["diameter_km"]["min"], r["diameter_km"]["max"]
+        )
+        row["velocity_norm"] = _minmax(
+            row["velocity_kps"], r["velocity_kps"]["min"], r["velocity_kps"]["max"]
+        )
+        row["miss_distance_norm"] = 1.0 - _minmax(
+            row["miss_distance_km"], r["miss_distance_km"]["min"], r["miss_distance_km"]["max"]
+        )
+        row["encounter_frequency_norm"] = _minmax(
+            row["encounter_frequency"],
+            r["encounter_frequency"]["min"],
+            r["encounter_frequency"]["max"],
+        )
+
     return rows

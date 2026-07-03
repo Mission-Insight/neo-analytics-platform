@@ -42,11 +42,26 @@ def fetch_asteroid_detail(self_link: str) -> dict[str, Any]:
     clean_url = remove_query_params(self_link)
 
     for attempt in range(1, MAX_RETRIES + 1):
-        response = requests.get(
-            clean_url,
-            params={"api_key": NASA_API_KEY},
-            timeout=REQUEST_TIMEOUT,
-        )
+        try:
+            response = requests.get(
+                clean_url,
+                params={"api_key": NASA_API_KEY},
+                timeout=REQUEST_TIMEOUT,
+            )
+        except requests.exceptions.ConnectionError as exc:
+            if attempt < MAX_RETRIES:
+                delay = 2 ** (attempt - 1) * 5
+                logger.warning(
+                    "Network error for %s (attempt %s/%s). Waiting %ss. Error: %s",
+                    clean_url,
+                    attempt,
+                    MAX_RETRIES,
+                    delay,
+                    exc,
+                )
+                time.sleep(delay)
+                continue
+            raise
 
         if response.status_code == 429:
             retry_after = int(response.headers.get("Retry-After", RATE_LIMIT_BACKOFF_SECONDS))
