@@ -692,10 +692,292 @@ This is the intended behaviour — scores express position within the observed r
 
 Three missing-data scenarios are possible:
 
-**1 — Missing diameter.** `estimated_diameter_min_km` or `estimated_diameter_max_km` is NULL in the `asteroids` table. `_add_diameter_feature` sets `diameter_km = None`. `_handle_missing_data` sets `is_scorable = False`. `_compute_risk_scores` sets `risk_score = None`. The asteroid is excluded from all ranking.
+**1 — Missing diameter.** `estimated_diameter_min_km` or `estimated_diameter_max_km` is NULL in the `asteroids` table. `_add_diameter_feature` sets `diameter_km = None`. `_handle_missing_data` sets `is_scorable = False`. `_apply_formula` sets `risk_score = None`. The asteroid is excluded from all ranking.
 
 **2 — Missing velocity or miss distance.** The asteroid has no records in `close_approaches` (LEFT JOIN returns no match). `MAX(relative_velocity_kps)` and `MIN(miss_distance_km)` both return NULL from the aggregation. `is_scorable = False`, `risk_score = None`.
 
 **3 — Missing encounter frequency.** Not possible. SQL `COUNT` on an unmatched LEFT JOIN always returns 0. An asteroid with no approach records receives `encounter_frequency = 0`, but it also falls into case 2 above and is excluded as non-scorable before normalization.
 
 In the current dataset all 4,084 asteroids are scorable, confirming that the 3-year pipeline window provided sufficient coverage to produce at least one close approach record for every ingested asteroid.
+
+---
+
+## 5.6 Model Validation
+
+### 5.6.1 Top 100 Risk List
+
+Generated from 4,084 scored asteroids (dataset: 2024-01-01 – 2026-12-31).
+Output saved to `data/output/top_100_risk.csv`.
+
+| Metric | Value |
+|---|---|
+| Asteroids scored | 4,084 |
+| Score range (full dataset) | 0.0114 – 0.4749 |
+| Score range (top 100) | 0.3562 – 0.4749 |
+| PHOs in top 100 | 29 / 100 (29%) |
+| PHO share of full dataset | 527 / 4,084 (12.9%) |
+
+---
+
+### 5.6.2 Review of Top-Ranked Objects
+
+#### PHO Representation
+
+PHOs make up 12.9% of the total dataset but 29% of the top 100 — a **2.25× overrepresentation**. This is the primary positive validation signal: without any direct use of the `is_potentially_hazardous` flag, the model independently elevates NASA-classified hazardous objects at more than twice their background rate. The composite formula is tracking dimensions that are genuinely correlated with hazard designation.
+
+The highest-ranked PHO is **415029 (2011 UL21)** at rank 7 (score 0.4047), driven by a combination of large diameter (2.80 km, `diameter_norm` = 0.078), high velocity (25.88 km/s), and a relatively close approach (6.6M km).
+
+---
+
+#### Top-Ranked Non-PHO Analysis
+
+Nine of the top 10 are non-PHOs. This is expected and explainable — each of these objects scores high by being extreme on one or two individual dimensions, not because they represent an overall threat profile that NASA would classify as hazardous.
+
+**Rank 1 — 433 Eros (score 0.4749):** Scores almost entirely on size. At 35.77 km diameter it holds the dataset maximum (`diameter_norm = 1.0`), contributing 0.40 of its 0.475 score from the size term alone. Velocity (3.73 km/s) and miss distance (59.5M km) are both low-risk — Eros is large but slow and distant. NASA does not classify it as a PHO because its minimum orbital intersection distance (~0.15 AU) is well above the 0.05 AU threshold.
+
+**Rank 5 — (2025 US6) (score 0.4070):** The inverse of Eros — tiny (0.003 km) but scores high purely on proximity. At 136,611 km it holds the dataset minimum miss distance (`miss_distance_norm = 1.0`), contributing 0.30 from the proximity term. Its velocity (2.08 km/s) is the lowest in the top 10. This object passed exceptionally close but posed little kinetic threat due to its small size and slow speed. Not classified as a PHO because it falls below NASA's minimum size threshold (~140 m).
+
+**Rank 66 — 887 Alinda (score 0.3649):** Scores on size (7.41 km, `diameter_norm` = 0.207) despite a distant miss (12.3M km) and low velocity (8.25 km/s). A well-known large NEO not classified as a PHO due to its MOID exceeding the 0.05 AU cutoff.
+
+---
+
+#### Score Distribution
+
+The score ceiling for the top 100 is **0.4749**, well below the theoretical maximum of 1.0. No asteroid in the dataset is simultaneously extreme across all four dimensions, which is physically expected — the closest approaches are not the fastest (confirmed by 2025 US6 at 2.08 km/s), and the largest objects are not always the closest. The formula is behaving as designed.
+
+The spread across the top 100 is narrow (~0.12 from rank 1 to rank 100), meaning the 101st-ranked asteroid is not dramatically less concerning than the 50th. This is consistent with a dataset where most high-scoring objects are moderately elevated on one or two dimensions rather than extreme on all.
+
+---
+
+#### Data Integrity Flags
+
+Two apparent duplicates appear in the top 100 and warrant investigation:
+
+| Ranks | Name | Asteroid IDs | Score |
+|---|---|---|---|
+| 29 & 30 | (2013 FW13) | 3633188 and 2837253 | 0.37971 (identical) |
+| 93 & 94 | (1998 SH2) | 2875163 and 3014109 | 0.35741 (identical) |
+
+Both pairs share the same name, identical scores, and near-identical feature values. These likely represent the same physical object recorded under two different provisional designations in the NeoWs API. The duplicates do not affect score correctness — each row is independently scored — but they inflate rank counts and should be investigated as part of 5.6.4.
+
+---
+
+#### Summary Assessment
+
+| Finding | Assessment |
+|---|---|
+| PHOs overrepresented 2.25× in top 100 | Positive — model tracks hazard-correlated dimensions without using the flag directly |
+| Top 6 ranks are non-PHOs | Expected — each driven by a single extreme feature value (size or proximity) that NASA's classification does not weight identically |
+| Score ceiling ~0.475 | Expected — no asteroid dominates all four dimensions simultaneously |
+| Duplicate entries (ranks 29/30, 93/94) | Flag for investigation — likely same objects under alternate designations |
+
+Overall the rankings appear **sensible**. The model is not producing arbitrary outputs: large, fast, or close objects consistently score high; small, slow, and distant objects score low. PHO overrepresentation without direct use of the PHO flag is meaningful convergent validation.
+
+---
+
+### 5.6.3 Comparison Against Hazardous Classification
+
+#### Methodology
+
+The `is_potentially_hazardous` flag is treated as a reference signal rather than a ground truth. NASA's PHO criteria — minimum orbit intersection distance ≤ 0.05 AU and absolute magnitude H ≤ 22 — are independent of the model's four features, but they are physically motivated by the same underlying concerns (size and orbital proximity). Meaningful overlap between model rankings and PHO designation is therefore evidence of construct validity without requiring the two to agree perfectly.
+
+Baseline: 527 of 4,084 scored asteroids are PHOs = **12.9%**. Any tier with a PHO rate above 12.9% indicates positive lift — the model is concentrating PHOs above their background rate.
+
+---
+
+#### PHO Precision at Rank Cutoffs
+
+| Rank cutoff | PHOs found | PHO rate | Baseline | Lift |
+|---|---|---|---|---|
+| Top 10 | 1 | 10% | 12.9% | 0.78× |
+| Top 25 | 8 | 32% | 12.9% | 2.48× |
+| Top 50 | 15 | 30% | 12.9% | 2.33× |
+| Top 100 | 29 | 29% | 12.9% | 2.25× |
+
+**PHO recall at top 100:** 29 of 527 total PHOs = **5.5%**
+
+---
+
+#### PHO Distribution by Rank Tier
+
+| Tier | PHOs | Slots | PHO rate | Lift |
+|---|---|---|---|---|
+| Ranks 1–10 | 1 | 10 | 10% | 0.78× |
+| Ranks 11–50 | 14 | 40 | 35% | 2.71× |
+| Ranks 51–100 | 14 | 50 | 28% | 2.17× |
+
+The first PHO appears at **rank 7** (415029 2011 UL21). The lowest-ranked PHO in the top 100 is **rank 99** (162882 2001 FD58).
+
+---
+
+#### Interpretation
+
+**Top 10 underperformance (lift 0.78×):** Ranks 1–6 are occupied by non-PHOs with single-dimension extremes — 433 Eros dominates on size alone; (2025 US6) dominates on proximity alone. Neither satisfies NASA's combined size–MOID criteria. The model is doing exactly what it was designed to do: score on multiple observed dimensions, not replicate PHO classification. The slight below-baseline PHO rate in the top 10 is a consequence of the formula faithfully scoring extreme-but-narrow cases ahead of more broadly threatening ones.
+
+**Ranks 11–50 concentration (lift 2.71×):** This is the strongest zone of PHO overrepresentation. Objects here tend to be moderately large and fast without holding extreme values on any single feature — the profile most consistent with NASA's combined-criterion classification. The 14 PHOs in this tier include well-characterised objects such as 276033 (2002 AJ129), 439437 (2013 NK4), and 523808 (2007 ML24), which score on multiple dimensions simultaneously.
+
+**Stable overrepresentation through ranks 51–100 (lift 2.17×):** PHO concentration remains above 2× baseline throughout the remainder of the list, indicating the model's moderate scores are also meaningful, not noise.
+
+**Score separation:** The mean score of the 29 PHOs in the top 100 is approximately **0.374**, compared to approximately **0.379** for the 71 non-PHOs. The gap is narrow (~0.005) because the extreme non-PHOs at ranks 1–6 pull the non-PHO average up; within ranks 10–100 the two groups are nearly indistinguishable by score alone. This is expected — the model scores risk dimensions, not hazard classification, and many PHOs and non-PHOs occupy similar positions in the multi-dimensional feature space.
+
+---
+
+#### Summary
+
+| Metric | Value |
+|---|---|
+| Overall lift at top 100 | 2.25× |
+| Peak lift (ranks 11–50) | 2.71× |
+| First PHO rank | 7 |
+| PHO recall at top 100 | 5.5% (29 / 527) |
+
+The comparison confirms a positive but imperfect relationship between model rankings and PHO designation. The model elevates PHOs at 2.25× their background rate across the full top 100 and at 2.71× in the rank 11–50 tier where multi-feature scoring is strongest. It is not a PHO classifier — nor was it designed to be — but the convergence validates that the four selected features and their weights are measuring dimensions that are genuinely correlated with established hazard criteria.
+
+---
+
+### 5.6.4 Unexpected Rankings Investigation
+
+#### Overview
+
+Two categories of anomaly were identified during review of `data/output/top_100_risk.csv`: (1) unusually high-ranking objects whose scores are driven by a single extreme feature, and (2) data integrity issues where the same physical asteroid appears twice under different NeoWs identifiers.
+
+---
+
+#### Category 1 — Single-Dimension Score Extremes
+
+Two objects hold the dataset maximum for one feature and therefore rank in the top 5 despite not representing an overall threat profile:
+
+| Rank | Name | Driving feature | Feature value | Notes |
+|---|---|---|---|---|
+| 1 | 433 Eros | Size (`diameter_norm = 1.0`) | 35.77 km | Slow (3.73 km/s), distant (59.5M km); MOID ~0.15 AU above PHO threshold |
+| 5 | (2025 US6) | Proximity (`miss_distance_norm = 1.0`) | 136,611 km | Tiny (0.003 km), slow (2.08 km/s); below NASA minimum size for PHO |
+
+These rankings are **expected model behavior**, not defects. The formula scores all four features independently; an asteroid that is maximally extreme on one dimension will always rank high even if the remaining dimensions are low. They are documented here because they would surprise a reader who expects model ranks to approximate hazard classification.
+
+**Finding:** No corrective action is needed. Scores are mathematically correct. The behaviour should be noted in user-facing documentation so that the score is not misread as a PHO likelihood.
+
+---
+
+#### Category 2 — Duplicate Physical Objects Under Multiple Designations
+
+Two physical asteroids each appear twice in the top 100 under separate NeoWs identifiers, consuming two rank slots each.
+
+##### Pair A — (2013 FW13), ranks 29 and 30
+
+| Field | Rank 29 (provisional) | Rank 30 (numbered) |
+|---|---|---|
+| Asteroid ID | 3633188 | 2837253 |
+| Name | (2013 FW13) | 837253 (2013 FW13) |
+| `diameter_km` | 0.19932 | 0.19932 |
+| `velocity_kps` | 19.7564637 | 19.7564590 |
+| `miss_distance_km` | 3,249,430 | 3,249,430 |
+| `encounter_frequency` | 2 | 2 |
+| `risk_score` | 0.37971 | 0.37971 |
+
+The velocity differs at the 7th decimal place (19.7564**637** vs 19.7564**590**). This is consistent with two separate NASA API fetches of the same close approach record returning slightly different floating-point representations. The resulting `risk_score` values round to the same 5-decimal representation; the true computed scores differ by ~1.7 × 10⁻⁸.
+
+##### Pair B — (1998 SH2), ranks 93 and 94
+
+| Field | Rank 93 (numbered) | Rank 94 (provisional) |
+|---|---|---|
+| Asteroid ID | 2875163 | 3014109 |
+| Name | 875163 (1998 SH2) | (1998 SH2) |
+| `diameter_km` | 0.28678 | 0.28678 |
+| `velocity_kps` | 17.30020 | 17.30020 |
+| `miss_distance_km` | 3,108,484 | 3,108,484 |
+| `encounter_frequency` | 1 | 1 |
+| `risk_score` | 0.35741 | 0.35741 |
+
+Feature values and score are bit-for-bit identical, indicating both records were populated from exactly the same API response.
+
+##### Root Cause
+
+NASA's NeoWs API exposes asteroids under both their **permanent minor planet number** (e.g., `837253`) and their **provisional designation** (e.g., `2013 FW13`). When the same object is returned by the API under two designations within overlapping date ranges, the ingestion pipeline records it as two separate asteroids. NeoWs asteroid IDs follow a pattern: IDs with a leading `2` prefix (e.g., `2837253`) encode the permanent catalog number; IDs with a leading `3` prefix (e.g., `3633188`) encode a provisional identifier. Both sets of IDs are valid NeoWs references to the same object.
+
+| Designation type | ID pattern | Example |
+|---|---|---|
+| Permanent (numbered) | `2` + catalog number | 2837253 → asteroid 837253 |
+| Provisional | `3` + internal code | 3633188 → (2013 FW13) |
+
+##### Impact
+
+- Each duplicate pair occupies two rank slots, compressing all downstream ranks by one position per pair. Ranks 31 onward are effectively one position lower than they would be after deduplication.
+- Scores are independently correct for each record — no scoring logic error is involved.
+- PHO classification is unaffected: both entries in each pair carry the same `is_potentially_hazardous` value.
+- The top-100 list contains 98 unique physical objects, not 100.
+
+##### Recommendation
+
+Deduplication should be applied at the ingestion layer, not the scoring layer. The preferred key for deduplication is the asteroid's canonical name (the parenthetical provisional designation appears to be stable across both record types). An alternative is to cross-reference the NeoWs `links.self` URL, which encodes the canonical ID.
+
+Until deduplication is implemented, a post-processing filter on `compute_risk_scores` output can collapse duplicate names to the entry with the lower (permanent) asteroid ID, retaining the numbered designation as the canonical record.
+
+---
+
+#### Summary of Findings
+
+| Anomaly | Type | Impact | Action required |
+|---|---|---|---|
+| Rank 1 (433 Eros) — size-only extreme | Expected model behavior | None on scoring | Document in user-facing output |
+| Rank 5 (2025 US6) — proximity-only extreme | Expected model behavior | None on scoring | Document in user-facing output |
+| Ranks 29/30 — (2013 FW13) duplicate | Data integrity: numbered vs provisional ID | 2 slots → 1 physical object | Deduplicate at ingestion |
+| Ranks 93/94 — (1998 SH2) duplicate | Data integrity: numbered vs provisional ID | 2 slots → 1 physical object | Deduplicate at ingestion |
+
+---
+
+## 5.7 Sensitivity Analysis
+
+**Purpose:** Understand how model behavior changes as weight parameters vary, identify which features dominate the rankings, and determine whether the baseline weights are the best defensible choice.
+
+---
+
+### 5.7.1 Vary Weight Parameters
+
+#### Scenarios
+
+Five weight configurations were tested. Each configuration sums to 1.0 and is scored against all 4,084 scorable asteroids.
+
+| Scenario | `size` (w₁) | `proximity` (w₂) | `velocity` (w₃) | `frequency` (w₄) | Rationale |
+|---|---|---|---|---|---|
+| **Baseline** | 0.40 | 0.30 | 0.20 | 0.10 | Current production weights (section 5.4.1) |
+| **Size-dominant** | 0.60 | 0.20 | 0.15 | 0.05 | Maximises physical size as the primary signal; motivated by kinetic energy ∝ m ∝ diameter³ |
+| **Proximity-dominant** | 0.20 | 0.50 | 0.20 | 0.10 | Maximises orbital proximity; nearest-approach distance as the dominant threat criterion |
+| **Velocity-dominant** | 0.20 | 0.20 | 0.50 | 0.10 | Maximises impact speed; motivated by kinetic energy ∝ v² |
+| **Equal weights** | 0.25 | 0.25 | 0.25 | 0.25 | Flat prior — no feature receives preferential weighting |
+
+#### Methodology
+
+Normalization ranges (`min` and `max` for each feature) are computed once from the full scorable set and held constant across all five scenarios. This ensures that any rank changes reflect the weight rebalancing alone, not a shift in normalization caused by different scoring populations. The formula applied per scenario is:
+
+```
+Risk(a) = w₁ · diameter_norm + w₂ · miss_distance_norm + w₃ · velocity_norm + w₄ · encounter_frequency_norm
+```
+
+Each scenario produces a complete independent ranking of all 4,084 scorable asteroids. Analysis compares ranks against the baseline to measure stability and identify dominant features.
+
+#### Output
+
+- **`data/output/sensitivity_analysis.csv`** — top-100 baseline asteroids with all five scenario ranks and scores as columns (`rank_baseline`, `score_baseline`, `rank_size_dominant`, etc.)
+- Console: top-20 comparison table per scenario; rank-change grid for baseline top 50; mean absolute rank change summary
+
+#### Execution Results
+
+All five scenarios executed successfully against 4,084 scorable asteroids. Output saved to `data/output/sensitivity_analysis.csv` (100 rows × 14 columns).
+
+**Top 5 per scenario:**
+
+| Rank | Baseline | Size-dominant | Proximity-dominant | Velocity-dominant | Equal weights |
+|---|---|---|---|---|---|
+| 1 | 433 Eros | 433 Eros | (2025 US6) | (2015 TD323) | (2025 US6) |
+| 2 | 66008 (1998 QH2) | 887 Alinda | (2019 PJ) | 465402 (2008 HW1) | (2012 VC26) |
+| 3 | (2019 PJ) | 66008 (1998 QH2) | (2018 SP2) | (2018 YC2) | (2014 QZ295) |
+| 4 | (2014 WF6) | 415029 (2011 UL21) | (2014 WF6) | 276033 (2002 AJ129) | (2015 TD323) |
+| 5 | (2025 US6) | 66146 (1998 TU3) | (2019 XF2) | (2019 CH1) | (2018 SP2) |
+
+**Notable observations:**
+
+- **433 Eros** (baseline 1) holds rank 1 under size-dominant but collapses to rank 2279 under proximity-dominant and 1478 under velocity-dominant. Confirmed single-dimension size extreme — no proximity or velocity signal.
+- **(2025 US6)** (baseline 5) holds rank 1 under both proximity-dominant and equal-weights. It combines `miss_distance_norm = 1.0` (closest approach in dataset) with `encounter_frequency_norm = 1.0` (maximum encounter frequency, 8 recorded approaches), making it dominant under any weighting that values both dimensions. Falls to rank 56 under size-dominant and 770 under velocity-dominant due to its tiny diameter and slow approach speed.
+- **887 Alinda** (baseline 66) rises to rank 2 under size-dominant (`diameter_norm = 0.207`, second largest in dataset after Eros). It is effectively invisible under the baseline formula because its proximity and velocity scores are weak. Under equal-weights it falls further to rank 535.
+- **(2015 TD323)** (baseline 12) rises to rank 1 under velocity-dominant (`velocity_norm = 0.780`) and holds top-5 under equal-weights (rank 4), showing it is a genuine multi-feature scorer — high on both velocity and proximity.
+- **(2018 YC2)** (baseline 87) rises to rank 3 under velocity-dominant (`velocity_norm = 0.802`, highest in the dataset), but weak proximity (`miss_distance_norm = 0.660`) keeps it below (2015 TD323) even under the velocity-dominant formula.

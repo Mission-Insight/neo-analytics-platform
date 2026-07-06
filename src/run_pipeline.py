@@ -15,7 +15,7 @@ from src.db.log_ingestion import (
 )
 from src.etl.fetch_neows import fetch_neows_feed
 from src.logging import setup_logging
-from src.models.risk_score import _build_features, _fetch_raw_data
+from src.models.risk_score import compute_risk_scores
 from src.parsing.parse_asteroids import parse_asteroid
 from src.parsing.parse_close_approaches import parse_close_approaches
 from src.etl.fetch_orbital_parameters import fetch_orbital_parameters_for_feed
@@ -141,10 +141,13 @@ def run_pipeline(start_date: str, end_date: str) -> None:
             )
             time.sleep(CHUNK_DELAY_SECONDS)
 
-    logger.info("Building modeling dataset.")
+    logger.info("Computing risk scores.")
     with get_connection() as conn:
-        modeling_data = _build_features(_fetch_raw_data(conn))
-    logger.info("Modeling dataset built: %s asteroid records.", len(modeling_data))
+        scored = compute_risk_scores(conn)
+    scorable = sum(1 for r in scored if r["risk_score"] is not None)
+    logger.info(
+        "Risk scores computed: %s/%s asteroids scored.", scorable, len(scored)
+    )
 
     logger.info("Pipeline completed successfully.")
 

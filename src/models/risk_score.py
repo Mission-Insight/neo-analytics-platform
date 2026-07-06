@@ -1,4 +1,97 @@
+import json
+import logging
 import sqlite3
+from pathlib import Path
+
+logger = logging.getLogger(__name__)
+
+_WEIGHTS_PATH = Path(__file__).parent / "weights.json"
+_WEIGHTS_SUM_TOLERANCE = 1e-9
+
+_DEFAULT_WEIGHTS = {
+    "size": 0.40,
+    "proximity": 0.30,
+    "velocity": 0.20,
+    "frequency": 0.10,
+}
+
+
+def _load_weights() -> dict:
+    if not _WEIGHTS_PATH.exists():
+        logger.debug("weights.json not found; using default weights.")
+        return _DEFAULT_WEIGHTS.copy()
+
+    with open(_WEIGHTS_PATH) as f:
+        data = json.load(f)
+
+    missing = _DEFAULT_WEIGHTS.keys() - data.keys()
+    if missing:
+        raise ValueError(f"weights.json is missing required keys: {missing}")
+
+    total = sum(data[k] for k in _DEFAULT_WEIGHTS)
+    if abs(total - 1.0) > _WEIGHTS_SUM_TOLERANCE:
+        raise ValueError(
+            f"weights.json values must sum to 1.0, got {total:.10f}. "
+            "Scores would fall outside [0, 1]."
+        )
+
+    return {k: data[k] for k in _DEFAULT_WEIGHTS}
+
+
+def compute_risk_scores(conn: sqlite3.Connection) -> list[dict]:
+    """
+    Public entry point for the risk scoring pipeline.
+    Returns one dict per asteroid with all engineered features, normalized
+    values, and a composite risk_score in [0, 1]. Non-scorable asteroids
+    receive risk_score = None and None for all normalized fields.
+    """
+    return _build_features(_fetch_raw_data(conn))
+
+
+def explain_score(row: dict) -> dict:
+    """
+    Return the final score and each feature's weighted contribution for a
+    single asteroid row produced by compute_risk_scores.
+
+    Contributions are the four terms that sum to risk_score:
+        size_contribution      = weight_size      * diameter_norm
+        proximity_contribution = weight_proximity * miss_distance_norm
+        velocity_contribution  = weight_velocity  * velocity_norm
+        frequency_contribution = weight_frequency * encounter_frequency_norm
+
+    Non-scorable rows return None for all contribution and score fields.
+    """
+    explanation = {
+        "asteroid_id": row["asteroid_id"],
+        "name": row["name"],
+        "rank": row["rank"],
+        "is_scorable": row["is_scorable"],
+        "risk_score": row["risk_score"],
+        "weights": None,
+        "normalized": None,
+        "contributions": None,
+    }
+
+    if not row["is_scorable"]:
+        return explanation
+
+    w = _load_weights()
+
+    explanation["weights"] = dict(w)
+    explanation["normalized"] = {
+        "size": row["diameter_norm"],
+        "proximity": row["miss_distance_norm"],
+        "velocity": row["velocity_norm"],
+        "frequency": row["encounter_frequency_norm"],
+    }
+    explanation["contributions"] = {
+        "size": w["size"] * row["diameter_norm"],
+        "proximity": w["proximity"] * row["miss_distance_norm"],
+        "velocity": w["velocity"] * row["velocity_norm"],
+        "frequency": w["frequency"] * row["encounter_frequency_norm"],
+    }
+
+    return explanation
 
 
 def _fetch_raw_data(conn: sqlite3.Connection) -> list[dict]:
@@ -136,31 +229,38 @@ def _handle_missing_data(rows: list[dict]) -> list[dict]:
     return rows
 
 
-_W_SIZE = 0.40
-_W_PROXIMITY = 0.30
-_W_VELOCITY = 0.20
-_W_FREQUENCY = 0.10
-
-
-def _compute_risk_scores(rows: list[dict]) -> list[dict]:
+def _apply_formula(rows: list[dict]) -> list[dict]:
+    w = _load_weights()
     for row in rows:
         if not row["is_scorable"]:
             row["risk_score"] = None
             continue
         row["risk_score"] = (
-            _W_SIZE * row["diameter_norm"]
-            + _W_PROXIMITY * row["miss_distance_norm"]
-            + _W_VELOCITY * row["velocity_norm"]
-            + _W_FREQUENCY * row["encounter_frequency_norm"]
+            w["size"] * row["diameter_norm"]
+            + w["proximity"] * row["miss_distance_norm"]
+            + w["velocity"] * row["velocity_norm"]
+            + w["frequency"] * row["encounter_frequency_norm"]
         )
     return rows
 
 
+def _rank_scores(rows: list[dict]) -> list[dict]:
+    scorable = sorted(
+        (r for r in rows if r["is_scorable"]),
+        key=lambda r: r["risk_score"],
+        reverse=True,
+    )
+    for rank, row in enumerate(scorable, start=1):
+        row["rank"] = rank
+
+    non_scorable = [r for r in rows if not r["is_scorable"]]
+    for row in non_scorable:
+        row["rank"] = None
+
+    return scorable + non_scorable
+
+
 def _build_features(rows: list[dict]) -> list[dict]:
-    """
-    Apply all feature engineering steps in sequence.
-    Each subtask (5.2.2–5.2.5) adds one call here.
-    """
     rows = _add_diameter_feature(rows)
     rows = _add_velocity_feature(rows)
     rows = _add_miss_distance_feature(rows)
@@ -168,7 +268,8 @@ def _build_features(rows: list[dict]) -> list[dict]:
     rows = _handle_missing_data(rows)
     ranges = _compute_feature_ranges(rows)
     rows = _normalize_features(rows, ranges)
-    rows = _compute_risk_scores(rows)
+    rows = _apply_formula(rows)
+    rows = _rank_scores(rows)
     return rows
 
 
