@@ -1,5 +1,7 @@
 # Risk Model Design
 
+**Professional model card (audience-facing summary):** [docs/risk_model_card.md](risk_model_card.md)
+
 ## 5.1.1 Definition of "Risk" for This Project
 
 ### What Risk Means Here
@@ -981,3 +983,147 @@ All five scenarios executed successfully against 4,084 scorable asteroids. Outpu
 - **887 Alinda** (baseline 66) rises to rank 2 under size-dominant (`diameter_norm = 0.207`, second largest in dataset after Eros). It is effectively invisible under the baseline formula because its proximity and velocity scores are weak. Under equal-weights it falls further to rank 535.
 - **(2015 TD323)** (baseline 12) rises to rank 1 under velocity-dominant (`velocity_norm = 0.780`) and holds top-5 under equal-weights (rank 4), showing it is a genuine multi-feature scorer — high on both velocity and proximity.
 - **(2018 YC2)** (baseline 87) rises to rank 3 under velocity-dominant (`velocity_norm = 0.802`, highest in the dataset), but weak proximity (`miss_distance_norm = 0.660`) keeps it below (2015 TD323) even under the velocity-dominant formula.
+
+---
+
+### 5.7.2 Measure Ranking Stability
+
+#### Metrics
+
+Two complementary metrics were computed against `data/output/sensitivity_analysis.csv`:
+
+- **Top-k retention rate** — fraction of baseline top-k asteroids that remain in top-k under each alternative scenario.
+- **Mean absolute rank change (MARC)** — average of `|rank_scenario − rank_baseline|` across the top-100 baseline asteroids; lower is more stable. Also reports max single-asteroid rank change and how many of the baseline top-100 fall completely out of top-100 under each scenario.
+
+#### Results
+
+**Top-k retention (vs baseline):**
+
+| Scenario | Top-10 retained | Top-20 retained |
+|---|---|---|
+| Size-dominant | 5 / 10 (50%) | 13 / 20 (65%) |
+| Proximity-dominant | 6 / 10 (60%) | 16 / 20 (80%) |
+| Equal weights | 4 / 10 (40%) | 10 / 20 (50%) |
+| Velocity-dominant | 2 / 10 (20%) | 6 / 20 (30%) |
+
+**Mean absolute rank change (top-100 baseline asteroids):**
+
+| Scenario | Mean \|Δrank\| | Max \|Δrank\| | # leaving top-100 |
+|---|---|---|---|
+| Size-dominant | 22.2 | 141 | 8 |
+| Proximity-dominant | 66.3 | 2278 | 13 |
+| Equal weights | 74.0 | 469 | 45 |
+| Velocity-dominant | 166.3 | 1477 | 61 |
+
+#### Observations
+
+1. **Size-dominant is the most stable alternative.** MARC of 22.2 and only 8 baseline top-100 asteroids displaced — the smallest disruption of any non-baseline scenario. Top-20 retention is 65%. This is because `diameter_norm` is heavily right-skewed: most asteroids have near-zero diameters, so inflating the size weight re-orders the few large-diameter outliers without broadly restructuring the list.
+
+2. **Proximity-dominant closely mirrors the baseline structure.** Top-20 retention of 80% (16/20) is the highest of any alternative. MARC of 66.3 is inflated almost entirely by 433 Eros (Δrank = 2278), which collapses from #1 to #2279 because its `miss_distance_norm` is low. Without Eros, the remaining 99 asteroids have a mean Δrank of only 43.3. This confirms that the baseline top rankings are already proximity-driven.
+
+3. **Velocity-dominant is the most disruptive scenario.** MARC of 166.3, top-20 retention of only 30% (6/20), and 61 of the 100 baseline top asteroids fall outside the top-100 entirely. Velocity (`velocity_kps`) is weakly correlated with the proximity and size features that dominate the baseline; reweighting it to 0.50 produces a substantially different risk ordering.
+
+4. **Equal weights causes surprising disruption.** Despite being a "neutral" configuration, 45 baseline top-100 asteroids fall out of top-100 and MARC is 74.0 — worse than proximity-dominant. This reveals that the baseline weights implicitly amplify proximity and frequency signals relative to the equal-weight alternative. Asteroids that cluster near the top under the baseline do so primarily through high `miss_distance_norm`, which receives a 0.10 premium over the equal-weight value.
+
+5. **Most stable individual asteroid: (2019 NG2)** (baseline rank 13). Its rank across all five scenarios: baseline 13 → size-dominant 16 → proximity-dominant 13 → velocity-dominant 17 → equal-weights 15. Maximum deviation of 4 ranks; it remains top-20 in every scenario. Its normalized features are balanced — high `miss_distance_norm` (0.882), moderate `velocity_norm` (0.595), non-zero `encounter_frequency_norm` (0.143) — with no single dimension that collapses under any weight configuration.
+
+---
+
+### 5.7.3 Identify Dominant Variables
+
+#### Feature Contribution Analysis
+
+For each of the 100 baseline top asteroids, the contribution of each feature to the baseline risk score is `wᵢ × norm_i`. Summing across all 100 and dividing by total score mass identifies which features actually drive the ranking.
+
+**Average normalized feature values and score contributions (top-100 baseline asteroids):**
+
+| Feature | Weight | Avg norm value | Avg contribution | % of avg risk score |
+|---|---|---|---|---|
+| Proximity (`miss_distance_norm`) | 0.30 | 0.885 | 0.266 | **70.7%** |
+| Velocity (`velocity_norm`) | 0.20 | 0.436 | 0.087 | **23.2%** |
+| Frequency (`encounter_frequency_norm`) | 0.10 | 0.139 | 0.014 | **3.7%** |
+| Size (`diameter_norm`) | 0.40 | 0.023 | 0.009 | **2.4%** |
+
+#### Dominant Variable: Proximity
+
+Proximity accounts for **70.7%** of the average baseline risk score despite carrying only the second-highest weight (0.30). This inversion — the 0.40-weight feature contributing only 2.4% while the 0.30-weight feature contributes 70.7% — is structural:
+
+1. **Dataset selection bias.** NeoWs returns asteroid close-approach records. All scorable asteroids have at least one close approach by definition, meaning `miss_distance_km` is systematically low → `miss_distance_norm` (inverted) is systematically high. The average across the full top-100 is 0.885, within the top decile of the [0, 1] scale.
+
+2. **Diameter power-law distribution.** Near-Earth asteroid diameters follow an extreme right-skew. Of the baseline top-100, **94 have `diameter_norm` < 0.05**; only three exceed 0.10 (433 Eros at 1.0, 887 Alinda at 0.207, 66146 at 0.161). The average `diameter_norm` across the top-100 is 0.023. At weight 0.40, the average size contribution is 0.009 — less than 1/29th of the proximity contribution.
+
+#### Secondary Variable: Velocity
+
+Velocity is the **primary within-list discriminator**. While proximity provides the bulk of each asteroid's absolute score, most top-100 asteroids have proximity values clustered in a narrow high range (0.80–0.99), giving velocity — with its wider spread (0.034–0.802) — more power to differentiate adjacent ranks. This is confirmed by the 5.7.2 stability results: velocity-dominant disrupts the ranking far more severely than proximity-dominant (MARC 166 vs 66), indicating that velocity carries independent signal orthogonal to the current ranking structure.
+
+#### Marginal Variables: Size and Frequency
+
+Combined, size and frequency account for only **6.1%** of the average risk score. Each is individually decisive only in extreme cases:
+
+- **Size** is dominant only for the three large-diameter outliers (Eros, Alinda, 66146); for 97% of the list it is negligible.
+- **Frequency** is decisive only for (2025 US6) (`encounter_frequency_norm = 1.0`, 8 recorded approaches) and secondarily for asteroids with 3+ approaches. Most scorable asteroids have 1–2 recorded approaches in the dataset window, giving `encounter_frequency_norm` values of 0.0–0.143 for the majority.
+
+#### Summary: Three-Tier Feature Dominance
+
+| Tier | Feature | Role |
+|---|---|---|
+| 1 — Dominant | Proximity (`miss_distance_norm`) | Provides ~71% of absolute score; explains the bulk of the ranking structure |
+| 2 — Discriminating | Velocity (`velocity_norm`) | Secondary signal; widest spread; primary tiebreaker within the high-proximity cluster |
+| 3 — Marginal | Size and Frequency | Combined ~6% of score; decisive only for outliers with extreme values on one dimension |
+
+The baseline formula has **effective weight inversion**: the feature given the highest weight (size at 0.40) delivers the least score mass, while the feature given the second-lowest weight (proximity at 0.30) dominates the output. This does not indicate a design flaw — it reflects the dataset's composition — but it should be a primary input to the weight recommendation in 5.7.4.
+
+---
+
+### 5.7.4 Recommend Final Weights
+
+#### Evidence Summary
+
+| Finding | Source | Implication for weights |
+|---|---|---|
+| Proximity contributes 70.7% of average risk score | 5.7.3 | Structural; driven by dataset selection, not miscalibration |
+| Size contributes only 2.4% despite weight 0.40 | 5.7.3 | Effective weight inversion — correct by design, not a flaw |
+| Size-dominant is the most stable alternative (MARC 22.2) | 5.7.2 | Inflating size weight preserves ranking structure |
+| Velocity-dominant is the most disruptive (MARC 166.3) | 5.7.2 | Increasing velocity weight surfaces different asteroids, not better ones |
+| Proximity-dominant has highest top-20 retention (80%) | 5.7.2 | Baseline already captures proximity signal effectively |
+| (2019 NG2) is top-20 in all five scenarios | 5.7.1/5.7.2 | Balanced multi-feature profile is the most defensible risk signal |
+| Equal weights causes 45/100 baseline top asteroids to leave top-100 | 5.7.2 | Flat weighting does not reflect the physical threat hierarchy |
+
+#### Recommendation: Retain Baseline Weights
+
+**Production weights remain: size = 0.40 · proximity = 0.30 · velocity = 0.20 · frequency = 0.10**
+
+The sensitivity analysis supports retaining the baseline configuration unchanged. The justification rests on four arguments:
+
+**1. Effective weight inversion is a data property, not a formula error.**
+The high size weight (0.40) is intentional: large asteroids deliver far greater kinetic energy (KE ∝ m ∝ d³) and are categorically more dangerous. The fact that NeoWs close-approach data is dominated by small objects means the size weight correctly *amplifies the rare large asteroid* (433 Eros, 887 Alinda) relative to the many small close-passers, rather than burying it. Reducing size weight to match its average contribution would make the formula insensitive to exactly the threat it is designed to flag.
+
+**2. The baseline already captures proximity signal at the appropriate level.**
+The proximity-dominant scenario (w₂ = 0.50) retains 80% of the baseline top-20 — the highest retention of any alternative. This confirms the baseline is already proximity-driven in practice and that raising the proximity weight would not surface materially better threats. It would instead entrench the dataset bias, making the risk list a pure closest-approach ranking with no penalty for small, slow objects.
+
+**3. Velocity weight adjustment is not warranted.**
+Velocity-dominant is the most disruptive scenario (MARC 166.3, 61/100 baseline top asteroids displaced). The asteroids it elevates — (2018 YC2), (2015 TD323), (2008 HW1) — have high approach speeds but the full cross-scenario analysis shows they are not consistently well-ranked. Increasing velocity weight to 0.20+ would disproportionately benefit asteroids whose speed is an observational artifact of orbital geometry rather than sustained threat proximity. The current 0.20 already gives velocity meaningful secondary influence.
+
+**4. Multi-feature stable asteroids anchor the recommendation.**
+The asteroids that rank top-20 across the widest range of weight scenarios — (2019 NG2), (2019 PJ), (2014 WF6), (2018 SP2) — all have balanced normalized profiles: high proximity, moderate velocity, and non-zero frequency. These are the most defensible entries in any risk list. The baseline weights surface this cluster consistently; alternative weight configurations fracture it (most clearly under velocity-dominant, which retains only 6 of the baseline top-20).
+
+#### Conditions and Monitoring
+
+The recommendation carries two conditions:
+
+1. **Dataset scope sensitivity.** The weight rationale depends on NeoWs returning a close-approach-biased sample with a heavy small-diameter majority. If the asteroid database is extended to include larger or more diverse objects, the effective proximity dominance will shift and the weights should be re-evaluated.
+
+2. **Periodic re-validation.** Re-run this sensitivity analysis after any major dataset update (new date range, new API source, significant change in scorable asteroid count). The current results reflect the 2024-01-01 to 2026-12-31 window with 4,084 scorable asteroids.
+
+#### Final Weights (confirmed for production)
+
+```json
+{
+  "size":      0.40,
+  "proximity": 0.30,
+  "velocity":  0.20,
+  "frequency": 0.10
+}
+```
+
+These values are already live in `src/models/weights.json`. No changes to application code are required as a result of the sensitivity analysis.
