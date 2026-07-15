@@ -8,7 +8,7 @@
 
 ---
 
-## 5.8.1 Model Overview
+## Model Overview
 
 ### Purpose
 
@@ -58,7 +58,7 @@ All scorable asteroids are ranked in descending order by Risk score. Asteroids w
 
 ### Limitations
 
-The following limitations apply to all outputs produced by this model. Section 5.8.4 expands each limitation with detail and recommended mitigations.
+The following limitations apply to all outputs produced by this model. The Known Limitations section below expands each limitation with detail and recommended mitigations.
 
 | # | Limitation | Scope |
 |---|---|---|
@@ -72,7 +72,7 @@ The following limitations apply to all outputs produced by this model. Section 5
 
 ---
 
-## 5.8.2 Feature Definitions
+## Feature Definitions
 
 Every variable that appears in model inputs, intermediate computations, or outputs is defined below. Variables are grouped by pipeline stage.
 
@@ -111,12 +111,12 @@ Normalization maps each raw feature to [0, 1] using the min-max ranges of the **
 
 | Variable | Type | Range | Definition |
 |---|---|---|---|
-| `risk_score` | float | [0, 1] for scorable asteroids; NULL otherwise | Composite risk score. Computed as the weighted sum of the four normalized features (see section 5.8.3). Higher score = higher relative risk. Scores are comparable within a single scoring run; they are not comparable across runs with different dataset windows or normalization ranges. |
+| `risk_score` | float | [0, 1] for scorable asteroids; NULL otherwise | Composite risk score. Computed as the weighted sum of the four normalized features (see Scoring Formula and Methodology). Higher score = higher relative risk. Scores are comparable within a single scoring run; they are not comparable across runs with different dataset windows or normalization ranges. |
 | `rank` | integer | 1 … N for scorable asteroids; NULL otherwise | Ordinal rank by descending `risk_score`. Rank 1 = highest composite risk in the current dataset. Ties in `risk_score` are broken by `asteroid_id` (ascending) for deterministic ordering. |
 
 ---
 
-## 5.8.3 Scoring Formula and Methodology
+## Scoring Formula and Methodology
 
 ### Step 1 — Normalization
 
@@ -151,7 +151,7 @@ Because all four normalized values lie in [0, 1] and the weights sum to 1.0, `Ri
 
 ### Weight Rationale
 
-Weights reflect a physical threat hierarchy derived from planetary defense principles and validated by sensitivity analysis (section 5.7):
+Weights reflect a physical threat hierarchy derived from planetary defense principles and validated by sensitivity analysis:
 
 | Feature | Weight | Rationale |
 |---|---|---|
@@ -209,9 +209,9 @@ Risk scores should be interpreted **comparatively within a single run**. Absolut
 
 ---
 
-## 5.8.4 Known Limitations
+## Known Limitations
 
-The seven limitations introduced in section 5.8.1 are expanded here with their practical impact and recommended mitigations.
+The seven limitations introduced in the Model Overview are expanded here with their practical impact and recommended mitigations.
 
 ---
 
@@ -259,9 +259,9 @@ The seven limitations introduced in section 5.8.1 are expanded here with their p
 
 **What it means.** The four feature weights (0.40 / 0.30 / 0.20 / 0.10) are fixed constants derived from a physical threat hierarchy and validated by sensitivity analysis. They are not learned from historical outcome data, not adjusted by expert feedback over time, and not conditional on asteroid type or orbital class.
 
-**Practical impact.** The model cannot adapt if domain knowledge shifts — for example, if new research suggests impact velocity is a more important discriminator than size for a specific asteroid size range. The sensitivity analysis (section 5.7) confirms the current weights produce a stable and defensible ranking, but "defensible" is not the same as "optimal."
+**Practical impact.** The model cannot adapt if domain knowledge shifts — for example, if new research suggests impact velocity is a more important discriminator than size for a specific asteroid size range. Sensitivity analysis confirms the current weights produce a stable and defensible ranking, but "defensible" is not the same as "optimal."
 
-**Mitigation.** Re-run the sensitivity analysis after any major dataset extension or domain-knowledge update. Document all weight changes with explicit rationale. The current weights and their justification are recorded in `src/models/weights.json` and `docs/risk_model_design.md` section 5.4.
+**Mitigation.** Re-run the sensitivity analysis after any major dataset extension or domain-knowledge update. Document all weight changes with explicit rationale. The current weights and their justification are recorded in `src/models/weights.json` and `docs/risk_model_design.md`.
 
 ---
 
