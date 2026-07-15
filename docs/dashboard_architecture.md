@@ -416,79 +416,6 @@ The nav bar is identical across all pages and is abbreviated as `[NAV]` in the w
 
 ---
 
-## System Architecture
-
-**Purpose:** document the as-built implementation — UI, services, and database interactions — as a reference for maintaining or extending the dashboard.
-
-### Layered overview
-
-```
-┌─────────────────────────────────────────────────────────────────────┐
-│  UI layer            src/dashboard/app.py + pages/*.py               │
-│                       (Streamlit pages: rendering, widgets, charts)  │
-└──────────────────────────────┬────────────────────────────────────────┘
-                                │ calls
-┌──────────────────────────────▼────────────────────────────────────────┐
-│  Services layer      src/dashboard/data_service.py                    │
-│                       (single access point; every function cached     │
-│                        with @st.cache_data)                           │
-└───────────────┬───────────────────────────────────────┬───────────────┘
-                │ calls                                  │ calls
-┌───────────────▼───────────────────┐   ┌────────────────▼───────────────┐
-│  Risk model    src/models/         │   │  Database access                │
-│                risk_score.py       │   │  src/dashboard/db.py            │
-│  (compute_risk_scores,             │   │  (get_connection: sqlite3 +     │
-│   explain_score — shared with      │   │   DATABASE_PATH from .env)      │
-│   Epic 5, not dashboard-specific)  │   │                                 │
-└───────────────┬────────────────────┘   └────────────────┬────────────────┘
-                │                                          │
-                └───────────────────┬──────────────────────┘
-                                    ▼
-                     data/database/neows.db (SQLite)
-                     tables: asteroids, close_approaches,
-                             orbital_parameters
-```
-
-The dashboard is **read-only** against this database — it never writes. All writes happen upstream, via the ETL pipeline (`src/etl/`, `src/parsing/`, `src/transform/`, `src/db/`) documented in `docs/architecture.md` and `docs/schema_design.md`.
-
-### UI layer
-
-| File | Role |
-|---|---|
-| `src/dashboard/app.py` | Entry point and the Home page. Runs `st.set_page_config`, renders the summary narrative, headline metrics, rank-1 spotlight, top-10 table, and the size/risk distribution charts. |
-| `src/dashboard/pages/1_Risk_Rankings.py` | Filterable, sortable, exportable table of every scorable asteroid. |
-| `src/dashboard/pages/2_Explorer.py` | Search by name/ID, then a per-asteroid profile: risk breakdown, orbital data, close-approach history. |
-| `src/dashboard/pages/3_Analytics.py` | Dataset-wide analysis: close-approach timeline, distance distribution, hazard population comparisons, correlation matrix, outlier investigation. |
-| `src/dashboard/pages/4_Model_Card.py` | Renders `docs/risk_model_card.md` directly — no separate content to maintain. |
-| `src/dashboard/layout.py` | Shared chrome used by every page: `render_page_header`, `render_sidebar`, `render_footer`, and the theme-aware `chart_color` helper used throughout the Altair charts. |
-| `src/dashboard/config.py` | Static display constants — app title/icon/layout, dataset window, and the model weights shown in the sidebar. |
-
-Each page is a standalone Streamlit script (the project uses Streamlit's classic `pages/` multipage convention); none import from each other, only from `layout.py`, `config.py`, and `data_service.py`.
-
-### Services layer
-
-`src/dashboard/data_service.py` is the single point every page goes through to get data — no page imports `src.models.risk_score` or `src.dashboard.db` directly (established in Story 6.3, section 6.3.1). Every function is decorated `@st.cache_data` (Story 6.9.2), so repeated calls across pages and reruns hit Streamlit's in-process cache rather than re-querying or re-computing.
-
-| Function | Backed by |
-|---|---|
-| `get_all_scores()` | `compute_risk_scores()` (risk model) — the base dataset every other function derives from |
-| `get_asteroid(id)`, `search_asteroids(query)` | filters over `get_all_scores()` |
-| `get_rankings()`, `get_top_risk(n)`, `get_summary_metrics()` | filters/aggregates over `get_all_scores()` |
-| `get_size_distribution()`, `get_risk_distribution()` | field extraction over `get_all_scores()` |
-| `get_high_level_metrics()`, `get_approach_statistics()` | aggregates over `get_all_scores()` |
-| `get_score_explanation(id)` | `explain_score()` (risk model) |
-| `get_close_approaches(id)` | direct SQL — event-level data not present in `get_all_scores()` |
-| `get_all_close_approaches()` | direct SQL — dataset-wide event-level data, joined with hazard status |
-| `get_feature_matrix()` | direct SQL — the Epic 4 correlation feature set (orbital parameters, absolute magnitude) not needed by risk scoring |
-
-### Database interactions
-
-`src/dashboard/db.py` exposes one function, `get_connection()`, opening a `sqlite3` connection to the path in the `DATABASE_PATH` environment variable (loaded via `python-dotenv` from the project's `.env`). Every `data_service` function that queries the database opens its own connection and closes it in a `finally` block — connections are not pooled or held open between calls.
-
-**Known inconsistency, documented rather than silently fixed:** `src/dashboard/db.py` reads `DATABASE_PATH`, while the ETL pipeline's own connection helper (`src/db/connection.py`) reads `DB_PATH` via `src.config`. Both currently point at the same file in this project's `.env`, so it works, but the two layers don't share a single source of truth for the database location. Worth reconciling if the dashboard and pipeline are ever deployed with different configs.
-
----
-
 ## Performance Baseline
 
 **Purpose:** establish a measured baseline before any optimization work (Story 6.9), so later changes can be checked against real numbers rather than guesswork.
@@ -561,3 +488,76 @@ The Python loop's per-row cost is flat across every scale tested — it *is* eff
 - **25× (~102K asteroids):** up to ~2.6 s cold for a single query; a page needing more than one of these (e.g. Analytics, which calls both `get_feature_matrix` and `get_all_close_approaches`) would exceed 3 s combined on first load. This is the point where "remains responsive" starts to fail for a cold visit — well past any realistic near-term target for this project's date-range-based ingestion.
 
 **Conclusion:** the dashboard remains responsive across every realistic growth scenario for this project (current data through the full known NEO catalog, ~10×). Beyond that, the fix is not the Python code — it's replacing the ad hoc `LEFT JOIN` + `GROUP BY` in `_fetch_raw_data`/`get_feature_matrix` with a pre-aggregated summary table (e.g. a `close_approach_stats` table maintained by the ETL pipeline, keyed by `asteroid_id`) so the dashboard reads a 1:1 join instead of aggregating a growing fan-out join at request time. Flagged here rather than implemented, since it would mean changing the ETL pipeline (Epic 3), outside this story's scope.
+
+---
+
+## System Architecture
+
+**Purpose:** document the as-built implementation — UI, services, and database interactions — as a reference for maintaining or extending the dashboard.
+
+### Layered overview
+
+```
+┌─────────────────────────────────────────────────────────────────────┐
+│  UI layer            src/dashboard/app.py + pages/*.py               │
+│                       (Streamlit pages: rendering, widgets, charts)  │
+└──────────────────────────────┬────────────────────────────────────────┘
+                                │ calls
+┌──────────────────────────────▼────────────────────────────────────────┐
+│  Services layer      src/dashboard/data_service.py                    │
+│                       (single access point; every function cached     │
+│                        with @st.cache_data)                           │
+└───────────────┬───────────────────────────────────────┬───────────────┘
+                │ calls                                  │ calls
+┌───────────────▼───────────────────┐   ┌────────────────▼───────────────┐
+│  Risk model    src/models/         │   │  Database access                │
+│                risk_score.py       │   │  src/dashboard/db.py            │
+│  (compute_risk_scores,             │   │  (get_connection: sqlite3 +     │
+│   explain_score — shared with      │   │   DATABASE_PATH from .env)      │
+│   Epic 5, not dashboard-specific)  │   │                                 │
+└───────────────┬────────────────────┘   └────────────────┬────────────────┘
+                │                                          │
+                └───────────────────┬──────────────────────┘
+                                    ▼
+                     data/database/neows.db (SQLite)
+                     tables: asteroids, close_approaches,
+                             orbital_parameters
+```
+
+The dashboard is **read-only** against this database — it never writes. All writes happen upstream, via the ETL pipeline (`src/etl/`, `src/parsing/`, `src/transform/`, `src/db/`) documented in `docs/architecture.md` and `docs/schema_design.md`.
+
+### UI layer
+
+| File | Role |
+|---|---|
+| `src/dashboard/app.py` | Entry point and the Home page. Runs `st.set_page_config`, renders the summary narrative, headline metrics, rank-1 spotlight, top-10 table, and the size/risk distribution charts. |
+| `src/dashboard/pages/1_Risk_Rankings.py` | Filterable, sortable, exportable table of every scorable asteroid. |
+| `src/dashboard/pages/2_Explorer.py` | Search by name/ID, then a per-asteroid profile: risk breakdown, orbital data, close-approach history. |
+| `src/dashboard/pages/3_Analytics.py` | Dataset-wide analysis: close-approach timeline, distance distribution, hazard population comparisons, correlation matrix, outlier investigation. |
+| `src/dashboard/pages/4_Model_Card.py` | Renders `docs/risk_model_card.md` directly — no separate content to maintain. |
+| `src/dashboard/layout.py` | Shared chrome used by every page: `render_page_header`, `render_sidebar`, `render_footer`, and the theme-aware `chart_color` helper used throughout the Altair charts. |
+| `src/dashboard/config.py` | Static display constants — app title/icon/layout, dataset window, and the model weights shown in the sidebar. |
+
+Each page is a standalone Streamlit script (the project uses Streamlit's classic `pages/` multipage convention); none import from each other, only from `layout.py`, `config.py`, and `data_service.py`.
+
+### Services layer
+
+`src/dashboard/data_service.py` is the single point every page goes through to get data — no page imports `src.models.risk_score` or `src.dashboard.db` directly (established in Story 6.3, section 6.3.1). Every function is decorated `@st.cache_data` (Story 6.9.2), so repeated calls across pages and reruns hit Streamlit's in-process cache rather than re-querying or re-computing.
+
+| Function | Backed by |
+|---|---|
+| `get_all_scores()` | `compute_risk_scores()` (risk model) — the base dataset every other function derives from |
+| `get_asteroid(id)`, `search_asteroids(query)` | filters over `get_all_scores()` |
+| `get_rankings()`, `get_top_risk(n)`, `get_summary_metrics()` | filters/aggregates over `get_all_scores()` |
+| `get_size_distribution()`, `get_risk_distribution()` | field extraction over `get_all_scores()` |
+| `get_high_level_metrics()`, `get_approach_statistics()` | aggregates over `get_all_scores()` |
+| `get_score_explanation(id)` | `explain_score()` (risk model) |
+| `get_close_approaches(id)` | direct SQL — event-level data not present in `get_all_scores()` |
+| `get_all_close_approaches()` | direct SQL — dataset-wide event-level data, joined with hazard status |
+| `get_feature_matrix()` | direct SQL — the Epic 4 correlation feature set (orbital parameters, absolute magnitude) not needed by risk scoring |
+
+### Database interactions
+
+`src/dashboard/db.py` exposes one function, `get_connection()`, opening a `sqlite3` connection to the path in the `DATABASE_PATH` environment variable (loaded via `python-dotenv` from the project's `.env`). Every `data_service` function that queries the database opens its own connection and closes it in a `finally` block — connections are not pooled or held open between calls.
+
+**Known inconsistency, documented rather than silently fixed:** `src/dashboard/db.py` reads `DATABASE_PATH`, while the ETL pipeline's own connection helper (`src/db/connection.py`) reads `DB_PATH` via `src.config`. Both currently point at the same file in this project's `.env`, so it works, but the two layers don't share a single source of truth for the database location. Worth reconciling if the dashboard and pipeline are ever deployed with different configs.
