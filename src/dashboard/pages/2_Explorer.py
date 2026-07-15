@@ -7,7 +7,7 @@ import altair as alt  # noqa: E402
 import pandas as pd  # noqa: E402
 import streamlit as st  # noqa: E402
 
-from src.dashboard.config import APP_ICON, APP_LAYOUT, APP_SIDEBAR_STATE, APP_TITLE  # noqa: E402
+from src.dashboard.ui_settings import APP_TITLE  # noqa: E402
 from src.dashboard.data_service import (  # noqa: E402
     get_asteroid,
     get_close_approaches,
@@ -16,26 +16,23 @@ from src.dashboard.data_service import (  # noqa: E402
 )
 from src.dashboard.layout import (  # noqa: E402
     chart_color,
+    configure_page,
     render_footer,
     render_page_header,
     render_sidebar,
 )
+from src.dashboard.palette import AMBER, BLUE, DARK_GREEN, GREEN  # noqa: E402
 
-st.set_page_config(
-    page_title=f"Explorer — {APP_TITLE}",
-    page_icon=APP_ICON,
-    layout=APP_LAYOUT,
-    initial_sidebar_state=APP_SIDEBAR_STATE,
-)
+configure_page(f"Explorer — {APP_TITLE}")
 
-# Categorical slots 1, 2, 3, 4 from the dashboard's reference palette, in the
-# same descending-weight order used on the Model Card (size, proximity,
-# velocity, frequency) — fixed order, never cycled.
+# Categorical slots 1, 2, 3, 4, in the same descending-weight order used on
+# the Model Card (size, proximity, velocity, frequency) — fixed order, never
+# cycled.
 _BREAKDOWN_COLORS = {
-    "size": {"light": "#2a78d6", "dark": "#3987e5"},
-    "proximity": {"light": "#1baf7a", "dark": "#199e70"},
-    "velocity": {"light": "#eda100", "dark": "#c98500"},
-    "frequency": {"light": "#008300", "dark": "#008300"},
+    "size": BLUE,
+    "proximity": GREEN,
+    "velocity": AMBER,
+    "frequency": DARK_GREEN,
 }
 _BREAKDOWN_LABELS = {
     "size": "Size",

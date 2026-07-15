@@ -38,6 +38,16 @@ def _load_weights() -> dict:
     return {k: data[k] for k in _DEFAULT_WEIGHTS}
 
 
+def get_weights() -> dict:
+    """
+    Public accessor for the current scoring weights (from weights.json, or
+    the built-in defaults if that file doesn't exist). Single source of
+    truth for anything that needs to display or reason about the weights
+    used by the model, e.g. the dashboard sidebar.
+    """
+    return _load_weights()
+
+
 def compute_risk_scores(conn: sqlite3.Connection) -> list[dict]:
     """
     Public entry point for the risk scoring pipeline.

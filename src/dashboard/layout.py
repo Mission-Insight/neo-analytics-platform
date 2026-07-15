@@ -2,20 +2,29 @@ from typing import TypeVar
 
 import streamlit as st
 
-from src.dashboard.config import (
+from src.dashboard.ui_settings import (
     APP_ICON,
+    APP_LAYOUT,
+    APP_SIDEBAR_STATE,
     APP_TITLE,
     DATA_SOURCE,
     DATASET_END,
     DATASET_START,
-    WEIGHT_DIAMETER,
-    WEIGHT_ENCOUNTER_FREQUENCY,
-    WEIGHT_MISS_DISTANCE,
-    WEIGHT_VELOCITY,
 )
+from src.models.risk_score import get_weights
 
 
 _T = TypeVar("_T")
+
+
+def configure_page(page_title: str) -> None:
+    """Shared st.set_page_config call for every dashboard page."""
+    st.set_page_config(
+        page_title=page_title,
+        page_icon=APP_ICON,
+        layout=APP_LAYOUT,
+        initial_sidebar_state=APP_SIDEBAR_STATE,
+    )
 
 
 def chart_color(palette: dict[str, _T]) -> _T:
@@ -24,7 +33,9 @@ def chart_color(palette: dict[str, _T]) -> _T:
         theme_type = st.context.theme.type
     except Exception:
         theme_type = "light"
-    return palette.get(theme_type, palette["light"])
+    if theme_type in palette:
+        return palette[theme_type]
+    return palette["light"]
 
 
 def render_page_header(title: str, subtitle: str = "") -> None:
@@ -45,11 +56,12 @@ def render_sidebar() -> None:
         st.caption(f"Source: {DATA_SOURCE}")
         st.divider()
 
+        weights = get_weights()
         st.markdown("**Model weights**")
-        st.caption(f"Size · {WEIGHT_DIAMETER:.2f}")
-        st.caption(f"Proximity · {WEIGHT_MISS_DISTANCE:.2f}")
-        st.caption(f"Velocity · {WEIGHT_VELOCITY:.2f}")
-        st.caption(f"Frequency · {WEIGHT_ENCOUNTER_FREQUENCY:.2f}")
+        st.caption(f"Size · {weights['size']:.2f}")
+        st.caption(f"Proximity · {weights['proximity']:.2f}")
+        st.caption(f"Velocity · {weights['velocity']:.2f}")
+        st.caption(f"Frequency · {weights['frequency']:.2f}")
         st.divider()
 
         st.caption(

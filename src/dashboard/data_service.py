@@ -1,6 +1,6 @@
 import streamlit as st
 
-from src.dashboard.db import get_connection
+from src.db.connection import get_connection
 from src.models.risk_score import compute_risk_scores
 from src.models.risk_score import explain_score as _explain_score
 

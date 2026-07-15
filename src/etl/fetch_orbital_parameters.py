@@ -7,14 +7,15 @@ from urllib.parse import urlparse
 
 import requests
 
-from src.config import NASA_API_KEY
+from src.config import (
+    HTTP_MAX_RETRIES as MAX_RETRIES,
+    HTTP_RATE_LIMIT_BACKOFF_SECONDS as RATE_LIMIT_BACKOFF_SECONDS,
+    HTTP_REQUEST_DELAY_SECONDS as REQUEST_DELAY_SECONDS,
+    HTTP_TIMEOUT_SECONDS as REQUEST_TIMEOUT,
+    NASA_API_KEY,
+)
 
 logger = logging.getLogger(__name__)
-
-REQUEST_TIMEOUT = 30
-REQUEST_DELAY_SECONDS = 1.0
-MAX_RETRIES = 3
-RATE_LIMIT_BACKOFF_SECONDS = 60
 
 
 def extract_self_links(feed_data: dict) -> list[str]:

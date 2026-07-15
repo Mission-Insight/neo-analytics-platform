@@ -13,6 +13,7 @@ from src.db.log_ingestion import (
     fail_ingestion_run,
     start_ingestion_run,
 )
+from src.config import PIPELINE_CHUNK_DELAY_SECONDS, PIPELINE_MAX_CHUNK_DAYS
 from src.etl.fetch_neows import fetch_neows_feed
 from src.logging import setup_logging
 from src.models.risk_score import compute_risk_scores
@@ -25,8 +26,8 @@ setup_logging()
 logger = logging.getLogger(__name__)
 
 
-MAX_CHUNK_DAYS = 7
-CHUNK_DELAY_SECONDS = 5
+MAX_CHUNK_DAYS = PIPELINE_MAX_CHUNK_DAYS
+CHUNK_DELAY_SECONDS = PIPELINE_CHUNK_DELAY_SECONDS
 
 
 def _date_chunks(start_date: str, end_date: str):

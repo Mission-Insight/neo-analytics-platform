@@ -84,7 +84,6 @@ data/
 tests/
 docs/
 notebooks/
-scripts/
 ```
 
 | Directory | Purpose |
@@ -94,7 +93,6 @@ scripts/
 | `tests/` | Unit and integration tests |
 | `docs/` | Architecture and technical documentation |
 | `notebooks/` | Experimental analysis and prototyping |
-| `scripts/` | Utility and automation scripts |
 
 ---
 
@@ -148,6 +146,8 @@ Environment template:
 ```text
 .env.example
 ```
+
+See `docs/configuration.md` for the full list of required and optional settings.
 
 ---
 

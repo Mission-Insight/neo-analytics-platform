@@ -8,7 +8,7 @@ import numpy as np  # noqa: E402
 import pandas as pd  # noqa: E402
 import streamlit as st  # noqa: E402
 
-from src.dashboard.config import APP_ICON, APP_LAYOUT, APP_SIDEBAR_STATE, APP_TITLE  # noqa: E402
+from src.dashboard.ui_settings import APP_TITLE  # noqa: E402
 from src.dashboard.data_service import (  # noqa: E402
     get_high_level_metrics,
     get_risk_distribution,
@@ -17,22 +17,19 @@ from src.dashboard.data_service import (  # noqa: E402
 )
 from src.dashboard.layout import (  # noqa: E402
     chart_color,
+    configure_page,
     render_footer,
     render_page_header,
     render_sidebar,
 )
+from src.dashboard.palette import BLUE, VIOLET  # noqa: E402
 
-# Categorical slots 1 (blue) and 5 (violet) from the dashboard's reference
-# palette; each chart is a single series so no legend is needed.
-_SIZE_CHART_COLOR = {"light": "#2a78d6", "dark": "#3987e5"}
-_RISK_CHART_COLOR = {"light": "#4a3aa7", "dark": "#9085e9"}
+# Categorical slots 1 (blue) and 5 (violet); each chart is a single series so
+# no legend is needed.
+_SIZE_CHART_COLOR = BLUE
+_RISK_CHART_COLOR = VIOLET
 
-st.set_page_config(
-    page_title=APP_TITLE,
-    page_icon=APP_ICON,
-    layout=APP_LAYOUT,
-    initial_sidebar_state=APP_SIDEBAR_STATE,
-)
+configure_page(APP_TITLE)
 
 
 def _threat_label(row: dict) -> str:
