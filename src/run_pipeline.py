@@ -1,5 +1,6 @@
 import argparse
 import logging
+import time
 from datetime import date, timedelta
 
 from src.db.connection import get_connection
@@ -14,6 +15,7 @@ from src.db.log_ingestion import (
 )
 from src.etl.fetch_neows import fetch_neows_feed
 from src.logging import setup_logging
+from src.models.risk_score import compute_risk_scores
 from src.parsing.parse_asteroids import parse_asteroid
 from src.parsing.parse_close_approaches import parse_close_approaches
 from src.etl.fetch_orbital_parameters import fetch_orbital_parameters_for_feed
@@ -24,6 +26,7 @@ logger = logging.getLogger(__name__)
 
 
 MAX_CHUNK_DAYS = 7
+CHUNK_DELAY_SECONDS = 5
 
 
 def _date_chunks(start_date: str, end_date: str):
@@ -128,6 +131,23 @@ def run_pipeline(start_date: str, end_date: str) -> None:
             chunk_end,
         )
         _run_chunk(chunk_start, chunk_end)
+
+        if i < len(chunks):
+            logger.info(
+                "Chunk %s/%s complete. Waiting %ss before next chunk.",
+                i,
+                len(chunks),
+                CHUNK_DELAY_SECONDS,
+            )
+            time.sleep(CHUNK_DELAY_SECONDS)
+
+    logger.info("Computing risk scores.")
+    with get_connection() as conn:
+        scored = compute_risk_scores(conn)
+    scorable = sum(1 for r in scored if r["risk_score"] is not None)
+    logger.info(
+        "Risk scores computed: %s/%s asteroids scored.", scorable, len(scored)
+    )
 
     logger.info("Pipeline completed successfully.")
 

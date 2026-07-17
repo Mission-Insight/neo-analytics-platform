@@ -12,7 +12,9 @@ from src.config import NASA_API_KEY
 logger = logging.getLogger(__name__)
 
 REQUEST_TIMEOUT = 30
-REQUEST_DELAY_SECONDS = 0.25
+REQUEST_DELAY_SECONDS = 1.0
+MAX_RETRIES = 3
+RATE_LIMIT_BACKOFF_SECONDS = 60
 
 
 def extract_self_links(feed_data: dict) -> list[str]:
@@ -39,15 +41,49 @@ def remove_query_params(url: str) -> str:
 def fetch_asteroid_detail(self_link: str) -> dict[str, Any]:
     clean_url = remove_query_params(self_link)
 
-    response = requests.get(
-        clean_url,
-        params={"api_key": NASA_API_KEY},
-        timeout=REQUEST_TIMEOUT,
-    )
+    for attempt in range(1, MAX_RETRIES + 1):
+        try:
+            response = requests.get(
+                clean_url,
+                params={"api_key": NASA_API_KEY},
+                timeout=REQUEST_TIMEOUT,
+            )
+        except requests.exceptions.ConnectionError as exc:
+            if attempt < MAX_RETRIES:
+                delay = 2 ** (attempt - 1) * 5
+                logger.warning(
+                    "Network error for %s (attempt %s/%s). Waiting %ss. Error: %s",
+                    clean_url,
+                    attempt,
+                    MAX_RETRIES,
+                    delay,
+                    exc,
+                )
+                time.sleep(delay)
+                continue
+            raise
 
-    response.raise_for_status()
+        if response.status_code == 429:
+            retry_after = int(response.headers.get("Retry-After", RATE_LIMIT_BACKOFF_SECONDS))
+            if attempt < MAX_RETRIES:
+                logger.warning(
+                    "Rate limit hit for %s (attempt %s/%s). Waiting %ss.",
+                    clean_url,
+                    attempt,
+                    MAX_RETRIES,
+                    retry_after,
+                )
+                time.sleep(retry_after)
+                continue
+            raise requests.HTTPError(
+                f"Rate limit exceeded after {MAX_RETRIES} attempts.",
+                response=response,
+            )
 
-    return response.json()
+        response.raise_for_status()
+        return response.json()
+
+    raise RuntimeError(f"Failed to fetch {clean_url} after {MAX_RETRIES} attempts.")
 
 
 def fetch_orbital_parameters_for_feed(feed_data: dict) -> list[dict[str, Any]]:
