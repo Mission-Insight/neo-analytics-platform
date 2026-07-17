@@ -15,7 +15,7 @@ Tracks progress through Epic 7 (tickets NEO-309–NEO-318, NEO-370). Updated as 
 | NEO-311 | 7.3 Automated Testing | Done |
 | NEO-312 | 7.4 Logging & Observability | Done |
 | NEO-313 | 7.5 Configuration Management | Done |
-| NEO-314 | 7.6 Continuous Integration | To Do |
+| NEO-314 | 7.6 Continuous Integration | In Progress |
 | NEO-315 | 7.7 Dockerization | To Do |
 | NEO-316 | 7.8 Documentation Excellence | To Do |
 | NEO-317 | 7.9 Performance Review | To Do |
@@ -168,6 +168,30 @@ Final state: 78/78 tests passing (6 new), flake8 clean, all existing behavior pr
 
 ---
 
+## 7.6 Continuous Integration (NEO-314)
+
+Goal: teach modern engineering workflow.
+
+| Ticket | Subtask | Status |
+|---|---|---|
+| NEO-342 | 7.6.1 Create GitHub Actions workflow | Done |
+| NEO-343 | 7.6.2 Install dependencies automatically | Done |
+| NEO-344 | 7.6.3 Execute automated tests | Done |
+| NEO-345 | 7.6.4 Run linting | Done |
+| NEO-346 | 7.6.5 Require successful CI before merge | To Do — GitHub branch-protection setting, deferred with the user's agreement |
+| NEO-347 | 7.6.6 Verify pipeline execution | To Do — requires pushing to trigger a real run, deferred with the user's agreement |
+
+Before starting, checked actual repo state rather than assuming: no `.github/workflows/` existed. The *ingredients* 7.6.2-7.6.4 need already existed from earlier stories (pinned `requirements.txt` from 7.2/7.5, the full pytest suite from 7.3, the pre-existing `.flake8` config) but nothing was wired into an automated pipeline yet.
+
+**7.6.1-7.6.4 (2026-07-16)** — all four done in one workflow file, `.github/workflows/ci.yml`: triggers on every push and pull request, one job (`test`) with steps for checkout, Python 3.10 setup (with pip caching), `pip install -r requirements.txt`, `flake8 .`, and `pytest --cov --cov-report=term-missing`. Deliberately did not add a `black --check` step — the project has pre-existing formatting debt untouched by this epic (see 7.2 session notes) that would fail CI on the very first run through no fault of new work.
+
+Validated locally end-to-end rather than trusting the YAML alone: parsed the workflow file with PyYAML to confirm valid syntax (note — PyYAML parses the bare `on:` key as the boolean `True` due to YAML 1.1's boolean-literal quirk; this is a well-known PyYAML artifact, not a bug — GitHub's own parser handles `on:` correctly, which is why every real-world GitHub Actions workflow uses this exact syntax). Then ran the exact three commands the workflow will run (`pip install`, `flake8 .`, `pytest --cov`) with `.env` temporarily removed, simulating exactly what a CI runner will see (no secrets file). All three passed — this is the payoff of the 7.5.2 test-isolation work: the suite needs zero secrets configured in GitHub for CI to go green. `.env` restored and confirmed the real-credentials path still works afterward.
+
+**Deferred to a later session** (with the user's agreement): 7.6.5 (branch protection requiring CI) is a GitHub repo-admin setting, not a code change. 7.6.6 (verify pipeline execution) requires actually pushing to trigger a real Actions run — nothing has been pushed yet this session.
+
+---
+
 ## Session log
 
 - **2026-07-15** — Kicked off Epic 7. Reviewed codebase structure and baseline gaps (no CI, no Docker, tests only cover `parsing/`). Completed 7.1.1 repository review; findings above. Created this tracking doc. Completed 7.1.2 — created `docs/technical_debt_register.md` with 12 prioritized items. Completed 7.1.3 — confirmed the register's existing High/Medium/Low tagging already satisfies this subtask. Completed 7.1.4 — reviewed the full register with the product owner; all 12 items confirmed with no changes. **7.1 Technical Debt Assessment complete.** Completed 7.2 Code Refactoring — applied all 12 TD items across the 6 subtasks (including TD-08, scoped in with the product owner despite the strict no-behavior-change bar); pytest 11/11 passing, flake8 clean, py_compile clean on every touched module. **7.2 Code Refactoring complete**, pending the user's own manual pass over the dashboard pages. Completed 7.3 Automated Testing — restructured `tests/` to mirror `src/`, built shared representative fixtures and two DB-fixture strategies, wrote unit/integration tests for parsing, db, the risk engine, and the dashboard data service (61 new tests, 72 total), added a TD-08 regression test, installed pytest-cov and scoped the 70-80% coverage target to core logic (98% achieved) after reviewing the scope question with the product owner, and documented it all in `docs/testing_strategy.md`. **7.3 Automated Testing complete.** Completed 7.5 Configuration Management — centralized previously-duplicated HTTP/pipeline/logging constants into `src/config.py` as environment-overridable values with unchanged defaults, decoupled the test suite from needing real secrets (verified by running the full suite with `.env` temporarily removed), added validation for the new config values, and documented everything in `docs/configuration.md`. **7.5 Configuration Management complete.**
+- **2026-07-16** — Started 7.6 Continuous Integration — created `.github/workflows/ci.yml` covering 7.6.1-7.6.4 (checkout, Python setup, install deps, lint, test), validated end-to-end locally with `.env` hidden to confirm CI needs no secrets to go green. 7.6.5 (branch protection) and 7.6.6 (verify a real pipeline run, requires pushing) deferred to a later session with the user's agreement — nothing pushed yet.
