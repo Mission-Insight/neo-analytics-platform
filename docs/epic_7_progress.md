@@ -179,7 +179,7 @@ Goal: teach modern engineering workflow.
 | NEO-344 | 7.6.3 Execute automated tests | Done |
 | NEO-345 | 7.6.4 Run linting | Done |
 | NEO-346 | 7.6.5 Require successful CI before merge | To Do — GitHub branch-protection setting, deferred with the user's agreement |
-| NEO-347 | 7.6.6 Verify pipeline execution | To Do — requires pushing to trigger a real run, deferred with the user's agreement |
+| NEO-347 | 7.6.6 Verify pipeline execution | In Progress — first real run failed, fix identified (see below) |
 
 Before starting, checked actual repo state rather than assuming: no `.github/workflows/` existed. The *ingredients* 7.6.2-7.6.4 need already existed from earlier stories (pinned `requirements.txt` from 7.2/7.5, the full pytest suite from 7.3, the pre-existing `.flake8` config) but nothing was wired into an automated pipeline yet.
 
@@ -187,7 +187,17 @@ Before starting, checked actual repo state rather than assuming: no `.github/wor
 
 Validated locally end-to-end rather than trusting the YAML alone: parsed the workflow file with PyYAML to confirm valid syntax (note — PyYAML parses the bare `on:` key as the boolean `True` due to YAML 1.1's boolean-literal quirk; this is a well-known PyYAML artifact, not a bug — GitHub's own parser handles `on:` correctly, which is why every real-world GitHub Actions workflow uses this exact syntax). Then ran the exact three commands the workflow will run (`pip install`, `flake8 .`, `pytest --cov`) with `.env` temporarily removed, simulating exactly what a CI runner will see (no secrets file). All three passed — this is the payoff of the 7.5.2 test-isolation work: the suite needs zero secrets configured in GitHub for CI to go green. `.env` restored and confirmed the real-credentials path still works afterward.
 
-**Deferred to a later session** (with the user's agreement): 7.6.5 (branch protection requiring CI) is a GitHub repo-admin setting, not a code change. 7.6.6 (verify pipeline execution) requires actually pushing to trigger a real Actions run — nothing has been pushed yet this session.
+**Deferred to a later session** (with the user's agreement): 7.6.5 (branch protection requiring CI) is a GitHub repo-admin setting, not a code change.
+
+### 7.6.6 first real run — failure and fix (2026-07-16)
+
+The user pushed the branch themselves and the first real CI run failed at the "Run linting (flake8)" step with `Process completed with exit code 127` (shell for "command not found"). Root cause: `flake8` was never listed in `requirements.txt` — it worked locally throughout this entire epic only because it happened to already be installed in the pre-existing dev venv from before Epic 7 started, so the gap was invisible to every local validation run. CI's "Install dependencies" step only runs `pip install -r requirements.txt`, which never installed it, so `flake8 .` wasn't found on PATH.
+
+Fix: added `flake8==7.3.0` (the version already installed locally) to `requirements.txt`. Verified properly this time — not just `pip show`, but installing into a completely bare venv with nothing else present and confirming `flake8 .` both installs and runs clean against the repo. (A full from-scratch reinstall of every pinned dependency was also attempted to mirror the CI job exactly, but hit a Windows long-path filesystem limitation local to this machine's temp directory — unrelated to the actual fix and not something the Ubuntu-based GitHub runner will hit, so the narrower bare-venv verification of just the missing package stands in for it.)
+
+Same gap exists for `black` (also installed locally, also missing from `requirements.txt`) but CI doesn't invoke `black`, so it isn't blocking — left for the user to decide since it's not part of this failure.
+
+**Lesson for future validation:** local "it works on my machine" checks in an already-populated dev venv can't catch a dependency that's missing from `requirements.txt` but happens to already be installed locally. A real CI failure surfaced what local validation structurally could not.
 
 ---
 
