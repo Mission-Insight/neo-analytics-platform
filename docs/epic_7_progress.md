@@ -15,9 +15,9 @@ Tracks progress through Epic 7 (tickets NEO-309–NEO-318, NEO-370). Updated as 
 | NEO-311 | 7.3 Automated Testing | Done |
 | NEO-312 | 7.4 Logging & Observability | Done |
 | NEO-313 | 7.5 Configuration Management | Done |
-| NEO-314 | 7.6 Continuous Integration | In Progress |
-| NEO-315 | 7.7 Dockerization | To Do |
-| NEO-316 | 7.8 Documentation Excellence | To Do |
+| NEO-314 | 7.6 Continuous Integration | Done |
+| NEO-315 | 7.7 Dockerization | Done |
+| NEO-316 | 7.8 Documentation Excellence | Done |
 | NEO-317 | 7.9 Performance Review | To Do |
 | NEO-318 | 7.10 Engineering Readiness Review | To Do |
 | NEO-370 | 7.11 Engineering Retrospective | To Do |
@@ -178,8 +178,8 @@ Goal: teach modern engineering workflow.
 | NEO-343 | 7.6.2 Install dependencies automatically | Done |
 | NEO-344 | 7.6.3 Execute automated tests | Done |
 | NEO-345 | 7.6.4 Run linting | Done |
-| NEO-346 | 7.6.5 Require successful CI before merge | To Do — GitHub branch-protection setting, deferred with the user's agreement |
-| NEO-347 | 7.6.6 Verify pipeline execution | In Progress — first real run failed, fix identified (see below) |
+| NEO-346 | 7.6.5 Require successful CI before merge | Done |
+| NEO-347 | 7.6.6 Verify pipeline execution | Done |
 
 Before starting, checked actual repo state rather than assuming: no `.github/workflows/` existed. The *ingredients* 7.6.2-7.6.4 need already existed from earlier stories (pinned `requirements.txt` from 7.2/7.5, the full pytest suite from 7.3, the pre-existing `.flake8` config) but nothing was wired into an automated pipeline yet.
 
@@ -187,9 +187,9 @@ Before starting, checked actual repo state rather than assuming: no `.github/wor
 
 Validated locally end-to-end rather than trusting the YAML alone: parsed the workflow file with PyYAML to confirm valid syntax (note — PyYAML parses the bare `on:` key as the boolean `True` due to YAML 1.1's boolean-literal quirk; this is a well-known PyYAML artifact, not a bug — GitHub's own parser handles `on:` correctly, which is why every real-world GitHub Actions workflow uses this exact syntax). Then ran the exact three commands the workflow will run (`pip install`, `flake8 .`, `pytest --cov`) with `.env` temporarily removed, simulating exactly what a CI runner will see (no secrets file). All three passed — this is the payoff of the 7.5.2 test-isolation work: the suite needs zero secrets configured in GitHub for CI to go green. `.env` restored and confirmed the real-credentials path still works afterward.
 
-**Deferred to a later session** (with the user's agreement): 7.6.5 (branch protection requiring CI) is a GitHub repo-admin setting, not a code change.
+**7.6.5 (2026-07-17)** — done by the user directly in GitHub (repo-admin setting, not a code change): branch protection on `main` now requires the "Lint & Test" check to pass before merging.
 
-### 7.6.6 first real run — failure and fix (2026-07-16)
+### 7.6.6 first real run — failure and fix (2026-07-17)
 
 The user pushed the branch themselves and the first real CI run failed at the "Run linting (flake8)" step with `Process completed with exit code 127` (shell for "command not found"). Root cause: `flake8` was never listed in `requirements.txt` — it worked locally throughout this entire epic only because it happened to already be installed in the pre-existing dev venv from before Epic 7 started, so the gap was invisible to every local validation run. CI's "Install dependencies" step only runs `pip install -r requirements.txt`, which never installed it, so `flake8 .` wasn't found on PATH.
 
@@ -199,9 +199,80 @@ Same gap exists for `black` (also installed locally, also missing from `requirem
 
 **Lesson for future validation:** local "it works on my machine" checks in an already-populated dev venv can't catch a dependency that's missing from `requirements.txt` but happens to already be installed locally. A real CI failure surfaced what local validation structurally could not.
 
+After the fix, the user re-pushed and confirmed the pipeline went green — 7.6.6 done. 7.6 Continuous Integration is now fully complete (all 6 subtasks done).
+
+---
+
+## 7.7 Dockerization (NEO-315)
+
+Goal: reproducible execution.
+
+| Ticket | Subtask | Status |
+|---|---|---|
+| NEO-348 | 7.7.1 Create Dockerfile | Done |
+| NEO-349 | 7.7.2 Build container | Done |
+| NEO-350 | 7.7.3 Launch application inside container | Done |
+| NEO-351 | 7.7.4 Mount local database | Done |
+| NEO-352 | 7.7.5 Document Docker usage | Done |
+
+**7.7.1 (2026-07-17)** — `Dockerfile` (new, repo root): pinned to `python:3.10.11-slim` matching the local dev Python version, installs `requirements.txt` before copying source (layer-caching), launches the Streamlit dashboard by default with `--server.address=0.0.0.0` (required — Streamlit's default bind is localhost-only, unreachable from outside the container) and `--server.headless=true`. `.dockerignore` (new) created alongside it as a required companion, not optional — without it `COPY . .` would bake `.env` (API key) and `venv/` straight into the image. Docker isn't installed in this environment, so none of 7.7.2 onward could be validated directly — all verification happened on the user's machine.
+
+**7.7.2** — Built via `docker build -t neo-analytics-platform .` on the user's machine; verified via `docker images` showing `neo-analytics-platform:latest` with a valid image ID (941MB total, 208MB content size — plausible for a Python image carrying pandas/numpy/matplotlib/streamlit/altair).
+
+**7.7.3** — Ran via `docker run -p 8501:8501 --env-file .env neo-analytics-platform`. Along the way, found and fixed three real bugs, none of which would have surfaced without an actual container run:
+- Docker Desktop wasn't installed under the standard `Program Files` path but per-user under `AppData\Local\Programs\DockerDesktop` — findable via `Get-Command docker`, not a bug, just needed locating.
+- The user's local `.env` had `BASE_URL ` with a trailing space before the `=`. `python-dotenv` silently trims this (why it never surfaced as a problem running locally), but Docker's `--env-file` parser rejects it outright. Fixed directly in `.env` via a targeted `sed` that only touched the key name, never exposing the actual secret value.
+- `.dockerignore` excluded the entire `docs/` folder as "dev-only," but `src/dashboard/pages/4_Model_Card.py` reads `docs/risk_model_card.md` at runtime — a genuine runtime dependency, not just documentation. Fixed by removing `docs/` from `.dockerignore` entirely (232K total, negligible size cost) rather than attempting a negation-pattern carve-out that has known cross-version quirks and couldn't be verified without Docker available locally.
+
+After both fixes: container runs, all 5 dashboard tabs are reachable, Model Card renders correctly. The other 4 tabs correctly show `sqlite3.OperationalError: unable to open database file` — expected, since `data/database/` is also excluded from the image (anticipating 7.7.4's volume mount) and no DB file exists inside the container yet.
+
+**7.7.4** — Used a Docker volume mount (`-v`) rather than baking a copy of the database into the image, so the containerized app reads/writes the real local `data/database/` directly instead of a frozen, stale snapshot that would vanish when the container stops. Confirmed `DATABASE_PATH` in `.env` is a relative path (not a Windows absolute path, which wouldn't resolve inside a Linux container) before proceeding. Mounted the whole `data/database/` directory rather than just the `.db` file, since SQLite can create companion `-journal`/`-wal`/`-shm` files alongside it that need to live in the same place. User confirmed all 4 previously-failing tabs (Home, Risk Rankings, Explorer, Analytics) now load real local data correctly.
+
+**Known limitations in the command used, not yet resolved — for 7.7.5 to cover:**
+- `${PWD}` syntax works in PowerShell/Git Bash/Unix shells but fails outright in plain Windows Command Prompt (`%CD%` there instead)
+- Must be run from the project root, or the mount silently points at the wrong location
+- Assumes `data/database/neows.db` already exists locally — it's gitignored, so a fresh clone has none and would need to run the ingestion pipeline first
+- Assumes the image was already built locally under the tag `neo-analytics-platform`
+- Assumes the runner has their own valid `.env` (intentional/correct, not a bug — just worth documenting explicitly rather than leaving implicit)
+
+**7.7.5** — `docs/docker.md` (new): prerequisites (Docker Desktop + WSL 2), build/run commands with both PowerShell/Git Bash and cmd.exe variants, running the ingestion pipeline inside a container via command override, what's deliberately excluded from the image and why, and a troubleshooting table covering every real failure hit in 7.7.2-7.7.4 (Docker Desktop not on PATH, engine not running, `.env` whitespace, missing `--env-file`, missing volume mount). `README.md` updated with a "Run with Docker" quick-start section pointing to it, and the stale "Docker" entry removed from the roadmap's "Potential future technologies" list since it's no longer future work.
+
+7.7 Dockerization is now fully complete (all 5 subtasks done).
+
+---
+
+## 7.8 Documentation Excellence (NEO-316)
+
+Goal: make the project understandable.
+
+| Ticket | Subtask | Status |
+|---|---|---|
+| NEO-353 | 7.8.1 Refine README as necessary | Done |
+| NEO-354 | 7.8.2 Update architecture diagram(s) | Done |
+| NEO-355 | 7.8.3 Document installation | Done |
+| NEO-356 | 7.8.4 Document project structure | Done |
+| NEO-357 | 7.8.5 Document developer workflow | Done |
+| NEO-358 | 7.8.6 Document testing | Done |
+| NEO-359 | 7.8.7 Document future roadmap | Done |
+
+Before writing anything, surveyed the existing docs against the current codebase rather than assuming they were current. Found that Epic 7's own refactoring (7.2's TD-02 and TD-10) had broken the accuracy of `docs/dashboard_architecture.md` — it still described `src/dashboard/db.py` and `src/dashboard/config.py`, both renamed/deleted months earlier in this same epic, and had a whole section titled "Known inconsistency, documented rather than silently fixed" describing a problem TD-02 had already fixed. `docs/architecture.md` had the same issue at the module-path level (`db.py`, `parse_data.py` — neither exists; actual code lives in `src/db/`, `src/parsing/`). The README's roadmap section had matching stale references plus described Epic 7 as entirely still-aspirational.
+
+**7.8.2** — Fixed first, since other docs reference it. `docs/architecture.md`: corrected every "Primary module" reference to the actual current package paths, added a new "Quality & Deployment Infrastructure" component covering config/testing/CI/Docker (none of which existed when this doc was originally written), updated the Development Tooling list. `docs/dashboard_architecture.md`: fixed the UI layer table and the layered-overview ASCII diagram to reference `src/db/connection.py` and `src/dashboard/ui_settings.py` instead of the deleted/renamed files, added the missing `palette.py` entry, and rewrote the "known inconsistency" section to correctly describe it as **resolved** (by TD-02 deleting the duplicate module, not just documented around).
+
+**7.8.1 + 7.8.4** — README: expanded the Project Structure section from a 5-line top-level list into an annotated tree showing the actual `src/`/`tests/` subpackage layout, `sql/`, `.github/workflows/`, and `Dockerfile`. Added a Documentation Index grouping all 16 files in `docs/` by category (engineering / data & schema / risk model / Epic 7 process) — previously undiscoverable without browsing the folder. Fixed the roadmap's stale module references for NEO-2/3/5/6, and replaced NEO-7's aspirational "Key objectives" list with an actual per-sub-story status checklist (7.1-7.7 done, 7.8 in progress at time of writing, 7.9-7.11 pending).
+
+**7.8.3 + 7.8.6** — Verified rather than rewrote: installation steps (clone → venv → deps → env config → validation → Docker) were already accurate and complete from prior stories (7.5.4, 7.7.5). Testing was already thoroughly covered by `docs/testing_strategy.md` (7.3.8). Added pointers from the README's "Run tests" section to that doc, and a `pytest --cov` example, rather than duplicating its content.
+
+**7.8.5** — New content; nothing previously documented the actual contribution workflow. Added a "Developer Workflow" section to the README: the `feature/neo-<epic>-<description>` branch naming convention actually used throughout this repo's history, the validation commands to run before pushing (matching exactly what CI runs), and what branch protection on `main` actually requires (passing "Lint & Test" check + at least one approval) before a PR can merge.
+
+**7.8.7** — Covered by the same roadmap rewrite as 7.8.1 — NEO-7's status checklist reflects actual progress rather than a static aspirational list, and the "Potential future technologies" list (already trimmed of "Docker" in 7.7.5) accurately reflects what's still genuinely future (FastAPI, PostgreSQL, cloud infrastructure) versus what's now shipped.
+
+Final state: 78/78 tests passing, flake8 clean (docs-only changes, but re-verified per habit), no broken cross-references in any updated doc.
+
 ---
 
 ## Session log
 
 - **2026-07-15** — Kicked off Epic 7. Reviewed codebase structure and baseline gaps (no CI, no Docker, tests only cover `parsing/`). Completed 7.1.1 repository review; findings above. Created this tracking doc. Completed 7.1.2 — created `docs/technical_debt_register.md` with 12 prioritized items. Completed 7.1.3 — confirmed the register's existing High/Medium/Low tagging already satisfies this subtask. Completed 7.1.4 — reviewed the full register with the product owner; all 12 items confirmed with no changes. **7.1 Technical Debt Assessment complete.** Completed 7.2 Code Refactoring — applied all 12 TD items across the 6 subtasks (including TD-08, scoped in with the product owner despite the strict no-behavior-change bar); pytest 11/11 passing, flake8 clean, py_compile clean on every touched module. **7.2 Code Refactoring complete**, pending the user's own manual pass over the dashboard pages. Completed 7.3 Automated Testing — restructured `tests/` to mirror `src/`, built shared representative fixtures and two DB-fixture strategies, wrote unit/integration tests for parsing, db, the risk engine, and the dashboard data service (61 new tests, 72 total), added a TD-08 regression test, installed pytest-cov and scoped the 70-80% coverage target to core logic (98% achieved) after reviewing the scope question with the product owner, and documented it all in `docs/testing_strategy.md`. **7.3 Automated Testing complete.** Completed 7.5 Configuration Management — centralized previously-duplicated HTTP/pipeline/logging constants into `src/config.py` as environment-overridable values with unchanged defaults, decoupled the test suite from needing real secrets (verified by running the full suite with `.env` temporarily removed), added validation for the new config values, and documented everything in `docs/configuration.md`. **7.5 Configuration Management complete.**
 - **2026-07-16** — Started 7.6 Continuous Integration — created `.github/workflows/ci.yml` covering 7.6.1-7.6.4 (checkout, Python setup, install deps, lint, test), validated end-to-end locally with `.env` hidden to confirm CI needs no secrets to go green. 7.6.5 (branch protection) and 7.6.6 (verify a real pipeline run, requires pushing) deferred to a later session with the user's agreement — nothing pushed yet.
+- **2026-07-17** — Cleaned up `.gitignore` before the user's first commit/push (untracked `.coverage` and the `data/` output CSVs that had been accidentally committed). User pushed and set up branch protection (7.6.5) themselves. First real CI run failed at the lint step (exit 127 — `flake8` missing from `requirements.txt`, invisible to local checks since it was already installed in the dev venv); fixed by pinning `flake8==7.3.0`, verified in a truly bare venv this time. User re-pushed and confirmed green. **7.6 Continuous Integration complete** (all 6 subtasks done). Resolved the open Epic 5 PR's merge conflict with `main` (both branches had independently diverged and redone early epics' work) and backported the CI workflow + a `requirements.txt` fix (same stdlib-pseudo-package bug found in the exit-1 install failure) to both `feature/neo-5-risk-scoring` and `feature/neo-6-dashboard`, since neither had the workflow file or working dependencies yet. Started 7.7 Dockerization — created `Dockerfile`/`.dockerignore` (7.7.1). User installed Docker Desktop and, with guidance, built the image (7.7.2) and launched the container (7.7.3), surfacing and fixing three real bugs along the way: a trailing space in `.env`'s `BASE_URL` key (Docker's `--env-file` parser is stricter than `python-dotenv`), and `docs/` being wrongly excluded from the image despite `4_Model_Card.py` reading a file from it at runtime. Dashboard confirmed running inside the container; database-dependent tabs correctly fail pending 7.7.4. Mounted the local database as a Docker volume (7.7.4) — user confirmed all previously-failing tabs now load real data. Documented Docker usage (7.7.5) in `docs/docker.md`, covering every real failure hit in 7.7.2-7.7.4. **7.7 Dockerization complete** (all 5 subtasks done). Completed 7.8 Documentation Excellence — found and fixed real staleness that Epic 7's own refactoring had introduced into `docs/architecture.md` and `docs/dashboard_architecture.md` (both still referenced modules renamed/deleted in 7.2), rewrote the README's roadmap section to replace stale module paths and an aspirational Epic 7 description with an accurate per-story status checklist, added a Documentation Index for the 16 files now in `docs/`, expanded the project structure section into an actual package tree, and added a new Developer Workflow section covering branching convention, pre-push validation, and PR/CI requirements. **7.8 Documentation Excellence complete** (all 7 subtasks done).

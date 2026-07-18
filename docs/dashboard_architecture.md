@@ -1,7 +1,7 @@
 # NEO Analytics Dashboard — Architecture & UX Design
 
 **Status:** In progress
-**Last updated:** 2026-07-13
+**Last updated:** 2026-07-17 (module references corrected for Epic 7 refactoring — see "Resolved (Epic 7/TD-02)" note below)
 
 ---
 
@@ -511,10 +511,10 @@ The Python loop's per-row cost is flat across every scale tested — it *is* eff
                 │ calls                                  │ calls
 ┌───────────────▼───────────────────┐   ┌────────────────▼───────────────┐
 │  Risk model    src/models/         │   │  Database access                │
-│                risk_score.py       │   │  src/dashboard/db.py            │
+│                risk_score.py       │   │  src/db/connection.py           │
 │  (compute_risk_scores,             │   │  (get_connection: sqlite3 +     │
-│   explain_score — shared with      │   │   DATABASE_PATH from .env)      │
-│   Epic 5, not dashboard-specific)  │   │                                 │
+│   explain_score — shared with      │   │   DB_PATH from src.config)      │
+│   Epic 5, not dashboard-specific)  │   │  shared with the ETL pipeline   │
 └───────────────┬────────────────────┘   └────────────────┬────────────────┘
                 │                                          │
                 └───────────────────┬──────────────────────┘
@@ -535,10 +535,11 @@ The dashboard is **read-only** against this database — it never writes. All wr
 | `src/dashboard/pages/2_Explorer.py` | Search by name/ID, then a per-asteroid profile: risk breakdown, orbital data, close-approach history. |
 | `src/dashboard/pages/3_Analytics.py` | Dataset-wide analysis: close-approach timeline, distance distribution, hazard population comparisons, correlation matrix, outlier investigation. |
 | `src/dashboard/pages/4_Model_Card.py` | Renders `docs/risk_model_card.md` directly — no separate content to maintain. |
-| `src/dashboard/layout.py` | Shared chrome used by every page: `render_page_header`, `render_sidebar`, `render_footer`, and the theme-aware `chart_color` helper used throughout the Altair charts. |
-| `src/dashboard/config.py` | Static display constants — app title/icon/layout, dataset window, and the model weights shown in the sidebar. |
+| `src/dashboard/layout.py` | Shared chrome used by every page: `configure_page`, `render_page_header`, `render_sidebar`, `render_footer`, and the theme-aware `chart_color` helper used throughout the Altair charts. |
+| `src/dashboard/ui_settings.py` | Static display constants — app title/icon/layout, dataset window. (Renamed from `config.py` in Epic 7/TD-10 — the old name collided with `src/config.py`, the actual app configuration module.) |
+| `src/dashboard/palette.py` | Shared chart color palette (Epic 7/TD-05) — centralizes hex values that were previously copy-pasted across `app.py` and multiple pages. |
 
-Each page is a standalone Streamlit script (the project uses Streamlit's classic `pages/` multipage convention); none import from each other, only from `layout.py`, `config.py`, and `data_service.py`.
+Each page is a standalone Streamlit script (the project uses Streamlit's classic `pages/` multipage convention); none import from each other, only from `layout.py`, `ui_settings.py`, `palette.py`, and `data_service.py`.
 
 ### Services layer
 
@@ -558,6 +559,6 @@ Each page is a standalone Streamlit script (the project uses Streamlit's classic
 
 ### Database interactions
 
-`src/dashboard/db.py` exposes one function, `get_connection()`, opening a `sqlite3` connection to the path in the `DATABASE_PATH` environment variable (loaded via `python-dotenv` from the project's `.env`). Every `data_service` function that queries the database opens its own connection and closes it in a `finally` block — connections are not pooled or held open between calls.
+The dashboard imports `get_connection()` directly from `src/db/connection.py` — the same module the ETL pipeline uses — which opens a `sqlite3` connection to `DB_PATH` (resolved in `src/config.py`, see `docs/configuration.md`). Every `data_service` function that queries the database opens its own connection and closes it in a `finally` block — connections are not pooled or held open between calls.
 
-**Known inconsistency, documented rather than silently fixed:** `src/dashboard/db.py` reads `DATABASE_PATH`, while the ETL pipeline's own connection helper (`src/db/connection.py`) reads `DB_PATH` via `src.config`. Both currently point at the same file in this project's `.env`, so it works, but the two layers don't share a single source of truth for the database location. Worth reconciling if the dashboard and pipeline are ever deployed with different configs.
+**Resolved (Epic 7/TD-02):** this section previously documented a known inconsistency — the dashboard had its own `src/dashboard/db.py` reading a separately-loaded `DATABASE_PATH` env var, while the ETL pipeline read `DB_PATH` via `src.config`. Both happened to point at the same file, but the two layers didn't share a single source of truth. `src/dashboard/db.py` was deleted and the dashboard was switched to import `src/db/connection.py` directly, eliminating the duplication rather than just documenting around it.
