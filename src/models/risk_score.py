@@ -130,17 +130,7 @@ def _fetch_raw_data(conn: sqlite3.Connection) -> list[dict]:
             ON ca.asteroid_id = a.asteroid_id
         LEFT JOIN orbital_parameters op
             ON op.asteroid_id = a.asteroid_id
-        GROUP BY
-            a.asteroid_id,
-            a.name,
-            a.estimated_diameter_min_km,
-            a.estimated_diameter_max_km,
-            a.is_potentially_hazardous,
-            op.eccentricity,
-            op.inclination,
-            op.orbital_period,
-            op.semi_major_axis,
-            op.perihelion_distance
+        GROUP BY a.asteroid_id
         """
     ).fetchall()
 
