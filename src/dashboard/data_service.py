@@ -3,6 +3,17 @@ import streamlit as st
 from src.db.connection import get_connection
 from src.models.risk_score import compute_risk_scores
 from src.models.risk_score import explain_score as _explain_score
+from src.models.risk_score import get_weights as _get_weights
+
+
+@st.cache_data
+def get_weights() -> dict:
+    """
+    Cached wrapper around risk_score.get_weights(). render_sidebar() calls
+    this on every page across every rerun, so without caching, weights.json
+    gets re-read and re-validated from disk on every widget interaction.
+    """
+    return _get_weights()
 
 
 @st.cache_data

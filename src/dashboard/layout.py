@@ -2,6 +2,7 @@ from typing import TypeVar
 
 import streamlit as st
 
+from src.dashboard.data_service import get_weights
 from src.dashboard.ui_settings import (
     APP_ICON,
     APP_LAYOUT,
@@ -11,7 +12,6 @@ from src.dashboard.ui_settings import (
     DATASET_END,
     DATASET_START,
 )
-from src.models.risk_score import get_weights
 
 
 _T = TypeVar("_T")
