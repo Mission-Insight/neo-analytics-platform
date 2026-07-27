@@ -46,15 +46,7 @@ def start_ingestion_run(
     return run_id
 
 
-def complete_ingestion_run(
-    conn: sqlite3.Connection,
-    run_id: int,
-    asteroid_count: int,
-    close_approach_count: int,
-    orbital_parameter_count: int,
-) -> None:
-    completed_at = get_utc_timestamp()
-
+def _get_started_at(conn: sqlite3.Connection, run_id: int) -> str:
     row = conn.execute(
         """
         SELECT started_at
@@ -67,7 +59,20 @@ def complete_ingestion_run(
     if row is None:
         raise RuntimeError("Ingestion run record not found.")
 
-    duration_seconds = calculate_duration_seconds(row[0], completed_at)
+    return row[0]
+
+
+def complete_ingestion_run(
+    conn: sqlite3.Connection,
+    run_id: int,
+    asteroid_count: int,
+    close_approach_count: int,
+    orbital_parameter_count: int,
+) -> None:
+    completed_at = get_utc_timestamp()
+
+    started_at = _get_started_at(conn, run_id)
+    duration_seconds = calculate_duration_seconds(started_at, completed_at)
 
     conn.execute(
         """
@@ -100,19 +105,8 @@ def fail_ingestion_run(
 ) -> None:
     completed_at = get_utc_timestamp()
 
-    row = conn.execute(
-        """
-        SELECT started_at
-        FROM ingestion_runs
-        WHERE run_id = ?
-        """,
-        (run_id,),
-    ).fetchone()
-
-    if row is None:
-        raise RuntimeError("Ingestion run record not found.")
-
-    duration_seconds = calculate_duration_seconds(row[0], completed_at)
+    started_at = _get_started_at(conn, run_id)
+    duration_seconds = calculate_duration_seconds(started_at, completed_at)
 
     conn.execute(
         """

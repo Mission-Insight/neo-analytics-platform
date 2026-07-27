@@ -5,15 +5,15 @@ sys.path.insert(0, str(Path(__file__).parents[3]))
 
 import streamlit as st  # noqa: E402
 
-from src.dashboard.config import APP_ICON, APP_LAYOUT, APP_SIDEBAR_STATE, APP_TITLE  # noqa: E402
-from src.dashboard.layout import render_footer, render_page_header, render_sidebar  # noqa: E402
-
-st.set_page_config(
-    page_title=f"Model Card — {APP_TITLE}",
-    page_icon=APP_ICON,
-    layout=APP_LAYOUT,
-    initial_sidebar_state=APP_SIDEBAR_STATE,
+from src.dashboard.ui_settings import APP_TITLE  # noqa: E402
+from src.dashboard.layout import (  # noqa: E402
+    configure_page,
+    render_footer,
+    render_page_header,
+    render_sidebar,
 )
+
+configure_page(f"Model Card — {APP_TITLE}")
 
 _MODEL_CARD_PATH = Path(__file__).parents[3] / "docs" / "risk_model_card.md"
 

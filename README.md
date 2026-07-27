@@ -90,11 +90,36 @@ scripts/
 | Directory | Purpose |
 |---|---|
 | `src/` | Core application source code |
-| `data/` | Raw and processed datasets |
-| `tests/` | Unit and integration tests |
-| `docs/` | Architecture and technical documentation |
+| `tests/` | Unit and integration tests, structured to mirror `src/` |
+| `sql/` | Database schema and validation queries |
+| `data/` | Raw and processed datasets (gitignored — generated locally, not versioned) |
+| `docs/` | Architecture and technical documentation — see the index below |
 | `notebooks/` | Experimental analysis and prototyping |
-| `scripts/` | Utility and automation scripts |
+| `.github/workflows/` | CI pipeline definition |
+
+---
+
+# Documentation Index
+
+**Engineering**
+- [`docs/architecture.md`](docs/architecture.md) — system architecture and component overview
+- [`docs/dashboard_architecture.md`](docs/dashboard_architecture.md) — dashboard UX design, navigation, and as-built implementation
+- [`docs/configuration.md`](docs/configuration.md) — every configuration value, its default, and where it's used
+- [`docs/testing_strategy.md`](docs/testing_strategy.md) — what's tested, what's deliberately excluded, and why
+- [`docs/docker.md`](docs/docker.md) — building and running the app in Docker, including troubleshooting
+
+**Data & schema**
+- [`docs/schema_design.md`](docs/schema_design.md) / [`docs/schema_design_rationale.md`](docs/schema_design_rationale.md) / [`docs/schema_documentation.md`](docs/schema_documentation.md) — database schema and design decisions
+- [`docs/entity_mapping.md`](docs/entity_mapping.md) / [`docs/er_diagram.md`](docs/er_diagram.md) — entity relationships
+- [`docs/neows_api_notes.md`](docs/neows_api_notes.md) / [`docs/json_structure_analysis.md`](docs/json_structure_analysis.md) — NASA API response shape notes
+
+**Risk model**
+- [`docs/risk_model_design.md`](docs/risk_model_design.md) — scoring methodology
+- [`docs/risk_model_card.md`](docs/risk_model_card.md) — model card: formula, weights, documented limitations
+
+**Epic 7 process**
+- [`docs/technical_debt_register.md`](docs/technical_debt_register.md) — prioritized technical debt register
+- [`docs/epic_7_progress.md`](docs/epic_7_progress.md) — story-by-story progress log for the engineering-excellence epic
 
 ---
 
@@ -149,6 +174,8 @@ Environment template:
 .env.example
 ```
 
+See `docs/configuration.md` for the full list of required and optional settings.
+
 ---
 
 ## 5. Run Validation
@@ -171,6 +198,25 @@ flake8 .
 pytest
 ```
 
+With coverage:
+
+```bash
+pytest --cov --cov-report=term-missing
+```
+
+See `docs/testing_strategy.md` for what's tested, what's deliberately excluded and why, and how the shared test fixtures work.
+
+---
+
+## 6. Run with Docker
+
+```bash
+docker build -t neo-analytics-platform .
+docker run -p 8501:8501 --env-file .env -v "${PWD}/data/database:/app/data/database" neo-analytics-platform
+```
+
+Then open `http://localhost:8501`. See `docs/docker.md` for prerequisites, platform-specific command variants, running the ingestion pipeline inside a container, and troubleshooting.
+
 ---
 
 # Development Tooling
@@ -183,6 +229,35 @@ This project includes:
 - Real-time lint diagnostics
 - Feature branch workflow
 - Git branch protections
+
+---
+
+# Developer Workflow
+
+## Branching
+
+Feature branches follow `feature/neo-<epic-number>-<short-description>` (e.g. `feature/neo-7-engineering-excellence`), branched from `main`.
+
+## Before pushing
+
+Run the same checks CI will run, so a failure shows up locally first rather than in the Actions tab:
+
+```bash
+black .
+flake8 .
+pytest
+```
+
+## Pull requests
+
+- Open a PR from your feature branch into `main`.
+- CI (`.github/workflows/ci.yml`) runs lint and the full test suite automatically on every push and PR — see `docs/testing_strategy.md` for what the test suite covers.
+- `main` is protected: the "Lint & Test" check must pass, and at least one approving review is required, before a PR can merge.
+- If CI fails, check the failing step's log on the Actions tab rather than guessing — see `docs/docker.md`'s troubleshooting table for Docker-specific failures, or the "Run Validation" commands above to reproduce a lint/test failure locally.
+
+## Commits
+
+Favor small, focused commits with messages that explain *why* a change was made, not just what changed — the diff already shows what changed.
 
 ---
 
@@ -255,8 +330,8 @@ Key objectives:
 - handle API rate limits and failures
 
 Primary modules:
-- `fetch_neows.py`
-- `parse_data.py`
+- `src/etl/fetch_neows.py`
+- `src/parsing/parse_asteroids.py`, `src/parsing/parse_close_approaches.py`
 
 ---
 
@@ -272,7 +347,7 @@ Key objectives:
 - design scalable database access patterns
 
 Primary module:
-- `db.py`
+- `src/db/` (`connection.py`, `init_db.py`, `load_asteroids.py`, `load_close_approaches.py`, `load_orbital_parameters.py`, `log_ingestion.py`)
 
 Future scaling target:
 - PostgreSQL migration
@@ -308,7 +383,7 @@ Key objectives:
 - support future scoring model expansion
 
 Primary module:
-- `risk_score.py`
+- `src/models/risk_score.py`
 
 ---
 
@@ -324,25 +399,28 @@ Key objectives:
 - present interactive charts and metrics
 
 Primary module:
-- `app.py`
+- `src/dashboard/` (`app.py`, `data_service.py`, `layout.py`, `palette.py`, `ui_settings.py`, `pages/`)
 
 ---
 
-## NEO-7 — Production Hardening & Quality Engineering
+## NEO-7 — Engineering Excellence & Production Readiness
 
-Improve system reliability, maintainability, and deployment readiness.
+Transform the functional prototype into a maintainable, testable, reliable, professionally engineered product. See `docs/epic_7_progress.md` for the full story-by-story log.
 
-Key objectives:
-- automated testing
-- lint validation
-- debugging workflows
-- CI/CD preparation
-- Docker support
-- environment standardization
-- cloud deployment preparation
+Status by sub-story:
+- ✅ 7.1 Technical Debt Assessment
+- ✅ 7.2 Code Refactoring
+- ✅ 7.3 Automated Testing
+- ✅ 7.4 Logging & Observability
+- ✅ 7.5 Configuration Management
+- ✅ 7.6 Continuous Integration
+- ✅ 7.7 Dockerization
+- 🔄 7.8 Documentation Excellence (in progress)
+- ⬜ 7.9 Performance Review
+- ⬜ 7.10 Engineering Readiness Review
+- ⬜ 7.11 Engineering Retrospective
 
-Potential future technologies:
+Potential future technologies (beyond this epic):
 - FastAPI
-- Docker
 - PostgreSQL
 - cloud infrastructure

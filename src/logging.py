@@ -2,6 +2,8 @@ import logging
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
 
+from src.config import LOG_BACKUP_COUNT, LOG_LEVEL, LOG_MAX_BYTES
+
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
 LOG_DIR = PROJECT_ROOT / "logs"
@@ -13,8 +15,8 @@ LOG_FILE = LOG_DIR / "neows.log"
 def setup_logging() -> None:
     handler = RotatingFileHandler(
         LOG_FILE,
-        maxBytes=1_000_000,
-        backupCount=5,
+        maxBytes=LOG_MAX_BYTES,
+        backupCount=LOG_BACKUP_COUNT,
         encoding="utf-8",
     )
 
@@ -25,6 +27,6 @@ def setup_logging() -> None:
     handler.setFormatter(formatter)
 
     logging.basicConfig(
-        level=logging.INFO,
+        level=getattr(logging, LOG_LEVEL),
         handlers=[handler],
     )

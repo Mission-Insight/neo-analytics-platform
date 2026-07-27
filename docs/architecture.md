@@ -27,31 +27,37 @@ Responsible for retrieving near-Earth object data from NASA's NeoWs (Near Earth 
 
 Primary responsibilities:
 - Authenticate using NASA API key
-- Fetch asteroid and near-Earth object data
-- Handle API requests and responses
-- Parse incoming JSON payloads
+- Fetch asteroid, close-approach, and orbital-parameter data
+- Handle API requests, retries, and rate-limit backoff
+- Validate response shape before downstream processing
 
-Primary module:
-- `fetch_neows.py`
+Primary modules:
+- `src/etl/fetch_neows.py` — the NeoWs feed (asteroids + close approaches)
+- `src/etl/fetch_orbital_parameters.py` — per-asteroid orbital detail lookups
+
+Retry/timeout/backoff behavior is environment-configurable (see `docs/configuration.md`) rather than hardcoded.
 
 ---
 
 ### ETL Pipeline
 
-Handles the Extract, Transform, and Load workflow for incoming API data.
+Handles the Extract, Transform, and Load workflow for incoming API data, orchestrated end-to-end by `src/run_pipeline.py`.
 
 #### Extract
-Retrieve raw data from NASA APIs.
+Retrieve raw data from NASA APIs (`src/etl/`).
 
 #### Transform
 Clean, normalize, validate, and structure incoming records.
 
+Primary modules:
+- `src/parsing/parse_asteroids.py`, `src/parsing/parse_close_approaches.py`, `src/parsing/utils.py` — shape raw NeoWs feed JSON into DB-ready records
+- `src/transform/transform_neows.py` — shape raw orbital-parameter JSON into DB-ready records
+
 #### Load
 Store processed records for analytics and dashboard consumption.
 
-Primary modules:
-- `fetch_neows.py`
-- `parse_data.py`
+Primary module:
+- `src/db/` — `connection.py` (connection factory), `init_db.py` (schema bootstrap), `load_asteroids.py`, `load_close_approaches.py`, `load_orbital_parameters.py` (upsert inserts), `log_ingestion.py` (per-run audit log: `ingestion_runs`/`ingestion_failures`)
 
 ---
 
@@ -60,19 +66,20 @@ Primary modules:
 Stores processed application and analytics data.
 
 Current implementation target:
-- SQLite (local development)
+- SQLite (local development), schema defined in `sql/schema.sql`
 
 Potential future implementation:
 - PostgreSQL (production-scale deployment)
 
 Primary module:
-- `db.py`
+- `src/db/connection.py`
 
 Responsibilities:
 - Data persistence
 - Query management
 - Record indexing
 - Historical data retention
+- Ingestion run auditing (`src/db/log_ingestion.py`)
 
 ---
 
@@ -81,29 +88,47 @@ Responsibilities:
 Processes stored data and generates analytical insights and scoring metrics.
 
 Primary module:
-- `risk_score.py`
+- `src/models/risk_score.py`
 
-Potential analytics:
-- Hazard classification
-- Distance-based risk scoring
-- Velocity analysis
-- Object size categorization
-- Trend analysis
+Scoring weights live in `src/models/weights.json` (single source of truth — the dashboard reads the same file via `risk_score.get_weights()` rather than keeping its own copy).
+
+Current analytics:
+- Hazard classification (potentially-hazardous-object flag, sourced from NASA)
+- Composite risk scoring: weighted combination of size, proximity, velocity, and encounter frequency
+- Per-feature contribution breakdown (`explain_score`)
+
+See `docs/risk_model_design.md` and `docs/risk_model_card.md` for the full methodology and documented limitations.
 
 ---
 
 ### Streamlit Dashboard
 
-Provides the user-facing analytics and visualization interface.
+Provides the user-facing analytics and visualization interface. Read-only against the database — all writes happen upstream via the ETL pipeline.
 
-Primary module:
-- `app.py`
+Primary modules:
+- `src/dashboard/app.py` — entry point and Home page
+- `src/dashboard/pages/` — `1_Risk_Rankings.py`, `2_Explorer.py`, `3_Analytics.py`, `4_Model_Card.py`
+- `src/dashboard/data_service.py` — single data-access point for every page, `@st.cache_data`-cached
+- `src/dashboard/layout.py`, `palette.py`, `ui_settings.py` — shared chrome, chart colors, and display constants
 
 Dashboard responsibilities:
 - Display asteroid analytics
-- Present risk scores
+- Present risk scores and their per-feature breakdown
 - Visualize trends and metrics
-- Support interactive exploration
+- Support interactive search, filtering, and CSV export
+
+See `docs/dashboard_architecture.md` for the detailed as-built dashboard architecture.
+
+---
+
+### Quality & Deployment Infrastructure
+
+Added in Epic 7 to make the platform testable, reliably reproducible, and safe to change.
+
+- **Configuration** (`src/config.py`) — every deployment-relevant value (secrets, HTTP tuning, logging) is centralized and environment-overridable. See `docs/configuration.md`.
+- **Automated testing** (`tests/`) — unit and integration tests for parsing, the database layer, the risk engine, and the dashboard's data service, run via `pytest`. See `docs/testing_strategy.md`.
+- **Continuous Integration** (`.github/workflows/ci.yml`) — lint (`flake8`) and the full test suite run on every push and pull request; `main` requires this check to pass before merging.
+- **Containerization** (`Dockerfile`, `.dockerignore`) — reproducible execution via Docker, with the local database mounted as a volume rather than baked into the image. See `docs/docker.md`.
 
 ---
 
@@ -182,12 +207,12 @@ Potential deployment targets:
 
 Current development environment includes:
 - Python virtual environments
-- Black formatting
-- Flake8 linting
-- VS Code debugging profiles
-- Real-time lint diagnostics
-- Git branch protections
-- Feature-branch workflow
+- Black formatting, Flake8 linting
+- pytest + pytest-cov, scoped to the tested core (see `docs/testing_strategy.md`)
+- GitHub Actions CI (lint + test on every push/PR)
+- Docker (see `docs/docker.md`)
+- VS Code debugging profiles, real-time lint diagnostics
+- Git branch protections, feature-branch workflow
 
 ---
 

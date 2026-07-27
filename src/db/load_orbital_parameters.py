@@ -104,7 +104,6 @@ def insert_orbital_parameters(
     ]
 
     conn.executemany(sql, params)
-    conn.commit()
 
     logger.info(
         "Inserted or updated %s orbital parameter records.",

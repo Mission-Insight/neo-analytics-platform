@@ -7,8 +7,14 @@ import time
 
 import requests
 
-from src.config import NASA_API_KEY
-from src.config import BASE_URL
+from src.config import (
+    BASE_URL,
+    HTTP_MAX_RETRIES as MAX_RETRIES,
+    HTTP_RATE_LIMIT_BACKOFF_SECONDS as RATE_LIMIT_BACKOFF_SECONDS,
+    HTTP_RETRY_BASE_DELAY_SECONDS as BASE_DELAY_SECONDS,
+    HTTP_TIMEOUT_SECONDS as REQUEST_TIMEOUT,
+    NASA_API_KEY,
+)
 from src.logging import setup_logging
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
@@ -22,43 +28,31 @@ REQUIRED_KEYS = {
 logger = logging.getLogger(__name__)
 
 
-def fetch_neows_feed(start_date: str, end_date: str) -> dict:
-    logger.info(
-        "REQUEST START | start_date=%s | end_date=%s",
-        start_date,
-        end_date,
-    )
-
-    params = {
-        "start_date": start_date,
-        "end_date": end_date,
-        "api_key": NASA_API_KEY,
-    }
-
-    max_retries = 3
-    base_delay = 1
-    rate_limit_backoff = 60
-
+def _request_with_retries(
+    params: dict,
+    start_date: str,
+    end_date: str,
+) -> requests.Response:
     response = None
-    for attempt in range(1, max_retries + 1):
+    for attempt in range(1, MAX_RETRIES + 1):
         try:
             logger.info(
                 "REQUEST ATTEMPT | attempt=%s | max_retries=%s",
                 attempt,
-                max_retries,
+                MAX_RETRIES,
             )
 
             response = requests.get(
                 BASE_URL,
                 params=params,
-                timeout=30,
+                timeout=REQUEST_TIMEOUT,
             )
 
             if response.status_code == 429:
                 retry_after = int(
-                    response.headers.get("Retry-After", rate_limit_backoff)
+                    response.headers.get("Retry-After", RATE_LIMIT_BACKOFF_SECONDS)
                 )
-                if attempt < max_retries:
+                if attempt < MAX_RETRIES:
                     logger.warning(
                         "REQUEST RATE LIMITED | attempt=%s | waiting=%ss",
                         attempt,
@@ -67,7 +61,7 @@ def fetch_neows_feed(start_date: str, end_date: str) -> dict:
                     time.sleep(retry_after)
                     continue
                 raise requests.HTTPError(
-                    f"Rate limit exceeded after {max_retries} attempts.",
+                    f"Rate limit exceeded after {MAX_RETRIES} attempts.",
                     response=response,
                 )
 
@@ -91,7 +85,7 @@ def fetch_neows_feed(start_date: str, end_date: str) -> dict:
             break
 
         except requests.RequestException as exc:
-            if attempt == max_retries:
+            if attempt == MAX_RETRIES:
                 logger.error(
                     "REQUEST FAILURE | retries_exhausted=True | error=%s",
                     exc,
@@ -99,7 +93,7 @@ def fetch_neows_feed(start_date: str, end_date: str) -> dict:
                 )
                 raise
 
-            delay = base_delay * (2 ** (attempt - 1))
+            delay = BASE_DELAY_SECONDS * (2 ** (attempt - 1))
 
             logger.warning(
                 "REQUEST RETRY | attempt=%s | next_delay_seconds=%s | error=%s",
@@ -113,6 +107,35 @@ def fetch_neows_feed(start_date: str, end_date: str) -> dict:
     if response is None:
         raise RuntimeError("No response received after all retry attempts.")
 
+    return response
+
+
+def _log_dataset_size(element_count: int) -> None:
+    if element_count == 0:
+        logger.warning("NASA API returned zero near-Earth objects")
+
+    elif element_count < 10:
+        logger.warning(
+            "NASA API returned an unusually small dataset: %s objects",
+            element_count,
+        )
+
+
+def fetch_neows_feed(start_date: str, end_date: str) -> dict:
+    logger.info(
+        "REQUEST START | start_date=%s | end_date=%s",
+        start_date,
+        end_date,
+    )
+
+    params = {
+        "start_date": start_date,
+        "end_date": end_date,
+        "api_key": NASA_API_KEY,
+    }
+
+    response = _request_with_retries(params, start_date, end_date)
+
     data = response.json()
 
     validate_response_shape(data)
@@ -122,14 +145,7 @@ def fetch_neows_feed(start_date: str, end_date: str) -> dict:
         data["element_count"],
     )
 
-    if data["element_count"] == 0:
-        logger.warning("NASA API returned zero near-Earth objects")
-
-    elif data["element_count"] < 10:
-        logger.warning(
-            "NASA API returned an unusually small dataset: %s objects",
-            data["element_count"],
-        )
+    _log_dataset_size(data["element_count"])
 
     return data
 
