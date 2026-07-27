@@ -80,24 +80,11 @@ flowchart LR
 
 ```text
 src/
-  config.py            application configuration (secrets + operational tuning)
-  logging.py            rotating file logging setup
-  run_pipeline.py        ETL pipeline entry point/orchestration
-  etl/                  NASA NeoWs API requests (feed + orbital parameters)
-  parsing/               raw JSON -> DB-ready asteroid/close-approach records
-  transform/              raw JSON -> DB-ready orbital-parameter records
-  db/                    SQLite connection, schema init, inserts, ingestion audit log
-  models/                risk scoring engine + weights.json
-  dashboard/              Streamlit app
-    pages/                  Risk Rankings / Explorer / Analytics / Model Card
-tests/                  mirrors src/ package-for-package
-  fixtures/               shared representative sample dataset
-sql/                    schema.sql, validation_queries.sql
-data/                   raw/processed datasets (gitignored, generated locally)
-docs/                   architecture, configuration, testing, Docker, model docs
-notebooks/              exploratory analysis and prototyping
-.github/workflows/      CI (lint + test on every push/PR)
-Dockerfile, .dockerignore   containerized execution (see docs/docker.md)
+data/
+tests/
+docs/
+notebooks/
+scripts/
 ```
 
 | Directory | Purpose |
